@@ -1,0 +1,167 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "Aptos", sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(181, 214, 242, 0.6), transparent 36%),
+    linear-gradient(180deg, #eef6fb 0%, #f9fbfd 100%);
+  color: #163042;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.app-shell {
+  display: grid;
+  gap: 24px;
+  min-height: 100vh;
+  padding: 48px;
+}
+
+.hero,
+.status-card {
+  max-width: 720px;
+  padding: 32px;
+  border: 1px solid rgba(22, 48, 66, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 20px 60px rgba(52, 84, 108, 0.12);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #486f8b;
+}
+
+h1,
+h2,
+.lede,
+dl,
+dd,
+dt,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2.5rem, 4vw, 4.4rem);
+  line-height: 0.95;
+}
+
+.lede {
+  margin-top: 16px;
+  max-width: 56ch;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: #365469;
+}
+
+.status-card h2 {
+  margin-bottom: 18px;
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.summary-text {
+  margin-bottom: 18px;
+  color: #365469;
+  line-height: 1.5;
+}
+
+dl {
+  display: grid;
+  gap: 12px;
+}
+
+dl div {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(235, 244, 250, 0.9);
+}
+
+dt {
+  font-weight: 700;
+  color: #27465d;
+}
+
+dd {
+  color: #3f6078;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 18px;
+  background: #163042;
+  color: #f7fbfd;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.pairing-form {
+  display: grid;
+  gap: 16px;
+}
+
+.pairing-form label {
+  display: grid;
+  gap: 8px;
+  color: #27465d;
+  font-weight: 600;
+}
+
+.pairing-form input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(39, 70, 93, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #163042;
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    padding: 20px;
+  }
+
+  .hero,
+  .status-card {
+    padding: 24px;
+  }
+
+  dl div {
+    grid-template-columns: 1fr;
+  }
+
+  .card-header {
+    flex-direction: column;
+  }
+}

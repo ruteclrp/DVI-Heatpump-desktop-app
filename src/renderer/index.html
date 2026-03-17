@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DVI Heatpump</title>
+    <script type="module" src="./main.ts"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero">
+        <p class="eyebrow">Windows desktop shell</p>
+        <h1>DVI Heatpump</h1>
+        <p class="lede">
+          Electron host scaffold for local bridge discovery, pairing, tunnel refresh,
+          and secure token handling.
+        </p>
+      </section>
+      <section class="status-card">
+        <h2>Runtime</h2>
+        <dl id="runtime-info"></dl>
+      </section>
+      <section class="status-card">
+        <div class="card-header">
+          <div>
+            <p class="eyebrow">Connection</p>
+            <h2>Bridge and tunnel status</h2>
+          </div>
+          <button id="refresh-connection" type="button">Refresh</button>
+        </div>
+        <p id="connection-summary" class="summary-text"></p>
+        <dl id="connection-info"></dl>
+      </section>
+      <section class="status-card">
+        <div class="card-header">
+          <div>
+            <p class="eyebrow">Pairing</p>
+            <h2>Fetch and store token</h2>
+          </div>
+        </div>
+        <form id="pairing-form" class="pairing-form">
+          <label>
+            <span>Pairing code</span>
+            <input id="pairing-code" name="pairingCode" type="password" autocomplete="off" />
+          </label>
+          <label>
+            <span>Device name</span>
+            <input id="device-name" name="deviceName" type="text" value="DVI Heatpump Desktop" />
+          </label>
+          <button id="pair-bridge" type="submit">Pair with bridge</button>
+        </form>
+        <p id="pairing-status" class="summary-text"></p>
+      </section>
+    </main>
+  </body>
+</html>
