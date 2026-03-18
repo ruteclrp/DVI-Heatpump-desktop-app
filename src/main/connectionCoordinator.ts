@@ -1,10 +1,19 @@
 import { app } from 'electron';
 import type { ConnectionSnapshot, PairingRequest } from '@shared/connection';
 import type { AppRuntimeInfo } from '@shared/runtime';
-import { discoverBridge } from './bridgeDiscovery';
+import {
+  discoverBridge,
+  normalizeBridgeBaseUrl,
+  type DiscoveredBridge,
+} from './bridgeDiscovery';
 import { pairWithBridge } from './pairing';
 import { loadToken, saveToken } from './secureStore';
-import { loadCachedTunnel, saveCachedTunnel } from './stateStore';
+import {
+  loadCachedTunnel,
+  loadConfiguredBridgeUrl,
+  saveCachedTunnel,
+  saveConfiguredBridgeUrl,
+} from './stateStore';
 import { fetchTunnelInfo } from './tunnel';
 
 const TOKEN_ACCOUNT = 'bridge-token';
@@ -23,13 +32,16 @@ export class ConnectionCoordinator {
 
   async refreshConnection(): Promise<ConnectionSnapshot> {
     const cachedTunnel = await loadCachedTunnel();
+    const configuredBridgeUrl = await loadConfiguredBridgeUrl();
     const storedToken = await this.tryLoadToken();
-    let localBridge = null;
+    let localBridge: DiscoveredBridge | null = null;
     let remoteTunnel = cachedTunnel;
     let lastError: string | null = null;
 
     try {
-      localBridge = await discoverBridge();
+      localBridge = await discoverBridge({
+        configuredBridgeUrls: configuredBridgeUrl ? [configuredBridgeUrl] : [],
+      });
     } catch (error) {
       lastError = getErrorMessage(error);
     }
@@ -47,6 +59,7 @@ export class ConnectionCoordinator {
 
     const snapshot: ConnectionSnapshot = {
       activeTransport: localBridge ? 'local' : storedToken && remoteTunnel ? 'remote' : 'offline',
+      bridgeOverrideUrl: configuredBridgeUrl,
       hasStoredToken: Boolean(storedToken),
       lastError,
       lastUpdatedAt: new Date().toISOString(),
@@ -72,13 +85,18 @@ export class ConnectionCoordinator {
   }
 
   async pairBridge(request: PairingRequest): Promise<ConnectionSnapshot> {
-    const localBridge = await discoverBridge();
+    const configuredBridgeUrl = await loadConfiguredBridgeUrl();
+    const pairingBaseUrl = configuredBridgeUrl ?? (
+      await discoverBridge({
+        configuredBridgeUrls: configuredBridgeUrl ? [configuredBridgeUrl] : [],
+      })
+    )?.baseUrl;
 
-    if (!localBridge) {
+    if (!pairingBaseUrl) {
       throw new Error('No reachable local bridge was found for pairing.');
     }
 
-    const pairingResult = await pairWithBridge(localBridge.baseUrl, request);
+    const pairingResult = await pairWithBridge(pairingBaseUrl, request);
 
     await saveToken({
       account: TOKEN_ACCOUNT,
@@ -89,11 +107,41 @@ export class ConnectionCoordinator {
     return this.refreshConnection();
   }
 
+  async setBridgeOverride(baseUrl: string | null): Promise<ConnectionSnapshot> {
+    const normalizedUrl = baseUrl?.trim() ? normalizeBridgeBaseUrl(baseUrl.trim()) : null;
+
+    await saveConfiguredBridgeUrl(normalizedUrl);
+    this.lastSnapshot = null;
+
+    return this.refreshConnection();
+  }
+
   getRuntimeInfo(): AppRuntimeInfo {
     return {
       platform: process.platform,
       shell: 'electron',
       version: app.getVersion(),
+    };
+  }
+
+  async getPreferredUiNavigationContext(snapshot?: ConnectionSnapshot): Promise<{
+    authorizationToken: string | null;
+    url: string | null;
+  }> {
+    const resolvedSnapshot = snapshot ?? (await this.getSnapshot());
+    const targetUrl = resolvedSnapshot.preferredUiUrl;
+
+    if (!targetUrl) {
+      return {
+        authorizationToken: null,
+        url: null,
+      };
+    }
+
+    return {
+      authorizationToken:
+        resolvedSnapshot.remoteTunnel?.tunnelUrl === targetUrl ? await this.tryLoadToken() : null,
+      url: targetUrl,
     };
   }
 

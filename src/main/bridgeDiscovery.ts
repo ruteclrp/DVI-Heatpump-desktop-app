@@ -3,7 +3,7 @@ import { networkInterfaces } from 'node:os';
 export interface DiscoveredBridge {
   baseUrl: string;
   discoveredAt: Date;
-  source: 'configured' | 'subnet-scan';
+  source: 'configured' | 'manual' | 'subnet-scan';
 }
 
 interface DiscoveryCandidate {
@@ -11,20 +11,25 @@ interface DiscoveryCandidate {
   source: DiscoveredBridge['source'];
 }
 
+interface DiscoveryOptions {
+  configuredBridgeUrls?: string[];
+}
+
 const DEFAULT_BRIDGE_PORT = Number(process.env.DVI_BRIDGE_PORT ?? '80');
 const DEFAULT_BRIDGE_PROTOCOL = process.env.DVI_BRIDGE_PROTOCOL === 'https' ? 'https' : 'http';
-const DEFAULT_DISCOVERY_PATH = process.env.DVI_BRIDGE_DISCOVERY_PATH ?? '/';
+const DEFAULT_DISCOVERY_PATH = process.env.DVI_BRIDGE_DISCOVERY_PATH ?? '/api/pump_type';
 const DEFAULT_DISCOVERY_TIMEOUT_MS = Number(process.env.DVI_BRIDGE_DISCOVERY_TIMEOUT_MS ?? '350');
 const DEFAULT_DISCOVERY_CONCURRENCY = Number(process.env.DVI_BRIDGE_DISCOVERY_CONCURRENCY ?? '24');
+const DEFAULT_DISCOVERY_PATHS = [DEFAULT_DISCOVERY_PATH, '/api/pump_type', '/health'];
 
-export async function discoverBridge(): Promise<DiscoveredBridge | null> {
-  const candidates = buildDiscoveryCandidates();
+export async function discoverBridge(options: DiscoveryOptions = {}): Promise<DiscoveredBridge | null> {
+  const candidates = buildDiscoveryCandidates(options);
 
   if (candidates.length === 0) {
     return null;
   }
 
-  const reachableBaseUrl = await findFirstReachableBaseUrl(candidates);
+  const reachableBaseUrl = await findPreferredReachableBaseUrl(candidates);
 
   if (!reachableBaseUrl) {
     return null;
@@ -36,24 +41,33 @@ export async function discoverBridge(): Promise<DiscoveredBridge | null> {
   };
 }
 
-function buildDiscoveryCandidates(): DiscoveryCandidate[] {
-  const configuredCandidates = getConfiguredCandidates();
+function buildDiscoveryCandidates(options: DiscoveryOptions): DiscoveryCandidate[] {
+  const configuredCandidates = getConfiguredCandidates(options.configuredBridgeUrls ?? []);
   const subnetCandidates = getSubnetCandidates();
 
   return dedupeCandidates([...configuredCandidates, ...subnetCandidates]);
 }
 
-function getConfiguredCandidates(): DiscoveryCandidate[] {
-  const configuredValue = process.env.DVI_BRIDGE_URLS ?? process.env.DVI_BRIDGE_URL ?? '';
+function getConfiguredCandidates(configuredBridgeUrls: string[]): DiscoveryCandidate[] {
+  const manualCandidates = configuredBridgeUrls
+    .map((value: string) => value.trim())
+    .filter(Boolean)
+    .map((value: string) => ({
+      baseUrl: normalizeBridgeBaseUrl(value),
+      source: 'manual' as const,
+    }));
 
-  return configuredValue
+  const configuredValue = process.env.DVI_BRIDGE_URLS ?? process.env.DVI_BRIDGE_URL ?? '';
+  const envCandidates = configuredValue
     .split(',')
     .map((value: string) => value.trim())
     .filter(Boolean)
     .map((value: string) => ({
-      baseUrl: normalizeBaseUrl(value),
+      baseUrl: normalizeBridgeBaseUrl(value),
       source: 'configured' as const,
     }));
+
+  return [...manualCandidates, ...envCandidates];
 }
 
 function getSubnetCandidates(): DiscoveryCandidate[] {
@@ -113,7 +127,7 @@ function isPrivateIpv4Address(address: string): boolean {
   return octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31;
 }
 
-function normalizeBaseUrl(value: string): string {
+export function normalizeBridgeBaseUrl(value: string): string {
   if (value.startsWith('http://') || value.startsWith('https://')) {
     return value.replace(/\/+$/, '');
   }
@@ -148,34 +162,80 @@ async function findFirstReachableBaseUrl(
   return resolvedCandidate;
 }
 
-async function probeBridge(baseUrl: string): Promise<boolean> {
-  const probeUrl = new URL(DEFAULT_DISCOVERY_PATH, `${baseUrl}/`);
+async function findPreferredReachableBaseUrl(
+  candidates: DiscoveryCandidate[],
+): Promise<DiscoveryCandidate | null> {
+  const sourcePriority: Array<DiscoveryCandidate['source']> = ['manual', 'configured', 'subnet-scan'];
 
-  try {
-    const headResponse = await fetch(probeUrl, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(DEFAULT_DISCOVERY_TIMEOUT_MS),
-    });
+  for (const source of sourcePriority) {
+    const sourceCandidates = candidates.filter((candidate) => candidate.source === source);
 
-    if (headResponse.status < 500) {
-      return true;
+    if (sourceCandidates.length === 0) {
+      continue;
     }
-  } catch {
-    return probeWithGet(probeUrl);
+
+    const reachableCandidate = await findFirstReachableBaseUrl(sourceCandidates);
+
+    if (reachableCandidate) {
+      return reachableCandidate;
+    }
   }
 
-  return probeWithGet(probeUrl);
+  return null;
 }
 
-async function probeWithGet(probeUrl: URL): Promise<boolean> {
+async function probeBridge(baseUrl: string): Promise<boolean> {
+  for (const path of getDiscoveryProbePaths()) {
+    const probeUrl = new URL(path, `${baseUrl}/`);
+
+    if (await probeBridgeEndpoint(probeUrl)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function probeBridgeEndpoint(probeUrl: URL): Promise<boolean> {
   try {
     const response = await fetch(probeUrl, {
       method: 'GET',
       signal: AbortSignal.timeout(DEFAULT_DISCOVERY_TIMEOUT_MS),
     });
 
-    return response.status < 500;
+    if (!response.ok) {
+      return false;
+    }
+
+    if (probeUrl.pathname === '/api/pump_type') {
+      const payload = (await response.json()) as { pump_type?: unknown };
+      return typeof payload.pump_type === 'string' && payload.pump_type.trim().length > 0;
+    }
+
+    return true;
   } catch {
     return false;
   }
+}
+
+function getDiscoveryProbePaths(): string[] {
+  const configuredPaths = [process.env.DVI_BRIDGE_DISCOVERY_PATHS]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .flatMap((value) => value.split(','))
+    .map((value) => normalizeDiscoveryPath(value))
+    .filter((value, index, values) => values.indexOf(value) === index);
+
+  return [...configuredPaths, ...DEFAULT_DISCOVERY_PATHS].filter(
+    (value, index, values) => values.indexOf(value) === index,
+  );
+}
+
+function normalizeDiscoveryPath(path: string): string {
+  const trimmedPath = path.trim();
+
+  if (!trimmedPath) {
+    return '/api/pump_type';
+  }
+
+  return trimmedPath.startsWith('/') ? trimmedPath : `/${trimmedPath}`;
 }

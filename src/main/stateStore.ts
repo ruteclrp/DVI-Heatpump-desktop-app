@@ -4,6 +4,7 @@ import { app } from 'electron';
 import type { TunnelInfo } from './tunnel';
 
 interface PersistedState {
+  configuredBridgeUrl: string | null;
   remoteTunnel: PersistedTunnelInfo | null;
 }
 
@@ -27,8 +28,25 @@ export async function loadCachedTunnel(): Promise<TunnelInfo | null> {
   };
 }
 
-export async function saveCachedTunnel(tunnel: TunnelInfo): Promise<void> {
+export async function loadConfiguredBridgeUrl(): Promise<string | null> {
+  const state = await loadStateFile();
+  return state.configuredBridgeUrl;
+}
+
+export async function saveConfiguredBridgeUrl(baseUrl: string | null): Promise<void> {
+  const state = await loadStateFile();
+
   await writeStateFile({
+    ...state,
+    configuredBridgeUrl: baseUrl,
+  });
+}
+
+export async function saveCachedTunnel(tunnel: TunnelInfo): Promise<void> {
+  const state = await loadStateFile();
+
+  await writeStateFile({
+    ...state,
     remoteTunnel: {
       authorizationMode: tunnel.authorizationMode,
       fetchedAt: tunnel.fetchedAt.toISOString(),
@@ -42,7 +60,7 @@ async function loadStateFile(): Promise<PersistedState> {
     const stateJson = await readFile(getStateFilePath(), 'utf8');
     return normalizePersistedState(JSON.parse(stateJson) as Partial<PersistedState>);
   } catch {
-    return { remoteTunnel: null };
+    return { configuredBridgeUrl: null, remoteTunnel: null };
   }
 }
 
@@ -54,11 +72,16 @@ async function writeStateFile(state: PersistedState): Promise<void> {
 }
 
 function normalizePersistedState(state: Partial<PersistedState>): PersistedState {
+  const configuredBridgeUrl = typeof state.configuredBridgeUrl === 'string'
+    ? state.configuredBridgeUrl
+    : null;
+
   if (!state.remoteTunnel?.tunnelUrl || !state.remoteTunnel.fetchedAt) {
-    return { remoteTunnel: null };
+    return { configuredBridgeUrl, remoteTunnel: null };
   }
 
   return {
+    configuredBridgeUrl,
     remoteTunnel: {
       authorizationMode: 'bearer',
       fetchedAt: state.remoteTunnel.fetchedAt,

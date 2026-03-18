@@ -12,12 +12,15 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
-    "dist:win": "npm run build && electron-builder --win nsis"
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
+    "dist:win:x64": "npm run build && electron-builder --win nsis --x64",
+    "dist:win:arm64": "npm run build && electron-builder --win nsis --arm64"
   },
   "dependencies": {
     "keytar": "^7.9.0"
   },
   "devDependencies": {
+    "@swc/core": "^1.11.9",
     "@types/node": "^22.13.14",
     "electron": "^35.0.2",
     "electron-builder": "^25.1.8",
@@ -28,6 +31,7 @@
   "build": {
     "appId": "com.dvi.heatpump.desktop",
     "productName": "DVI Heatpump",
+    "artifactName": "${productName} Setup ${version}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -43,7 +47,8 @@
         {
           "target": "nsis",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         }
       ]

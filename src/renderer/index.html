@@ -30,6 +30,25 @@
         </div>
         <p id="connection-summary" class="summary-text"></p>
         <dl id="connection-info"></dl>
+        <div class="action-row">
+          <button id="open-preferred-ui" type="button">Open bridge UI</button>
+        </div>
+        <form id="bridge-override-form" class="pairing-form compact-form">
+          <label>
+            <span>Bridge URL override for VPN</span>
+            <input
+              id="bridge-override-url"
+              name="bridgeOverrideUrl"
+              type="text"
+              placeholder="http://192.168.1.50 or https://bridge.example"
+            />
+          </label>
+          <div class="action-row">
+            <button id="save-bridge-override" type="submit">Save bridge URL</button>
+            <button id="clear-bridge-override" type="button" class="secondary-button">Clear</button>
+          </div>
+        </form>
+        <p id="bridge-override-status" class="summary-text"></p>
       </section>
       <section class="status-card">
         <div class="card-header">

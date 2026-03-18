@@ -131,6 +131,10 @@ button:disabled {
   gap: 16px;
 }
 
+.compact-form {
+  margin-top: 18px;
+}
+
 .pairing-form label {
   display: grid;
   gap: 8px;
@@ -144,6 +148,17 @@ button:disabled {
   border: 1px solid rgba(39, 70, 93, 0.18);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.9);
+  color: #163042;
+}
+
+.action-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.secondary-button {
+  background: #d9e5ee;
   color: #163042;
 }
 

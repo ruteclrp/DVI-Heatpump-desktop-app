@@ -3,7 +3,7 @@ export type ConnectionTransport = 'local' | 'remote' | 'offline';
 export interface BridgeConnectionInfo {
   baseUrl: string;
   discoveredAt: string;
-  source: 'configured' | 'subnet-scan';
+  source: 'configured' | 'manual' | 'subnet-scan';
 }
 
 export interface RemoteTunnelConnectionInfo {
@@ -14,6 +14,7 @@ export interface RemoteTunnelConnectionInfo {
 
 export interface ConnectionSnapshot {
   activeTransport: ConnectionTransport;
+  bridgeOverrideUrl: string | null;
   hasStoredToken: boolean;
   lastError: string | null;
   lastUpdatedAt: string;
@@ -29,5 +30,7 @@ export interface PairingRequest {
 }
 
 export const getConnectionSnapshotChannel = 'connection:get-snapshot';
+export const openPreferredUiChannel = 'connection:open-preferred-ui';
 export const pairBridgeChannel = 'connection:pair-bridge';
 export const refreshConnectionChannel = 'connection:refresh';
+export const setBridgeOverrideChannel = 'connection:set-bridge-override';

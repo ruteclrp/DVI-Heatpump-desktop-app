@@ -9,37 +9,68 @@ export interface PairingToken {
   token: string;
 }
 
+const DEFAULT_PAIR_PATHS = ['/pair', '/api/pair'];
+
 export async function pairWithBridge(
   baseUrl: string,
   payload: PairingRequestPayload = {},
 ): Promise<PairingToken> {
-  const response = await fetch(new URL('/pair', `${baseUrl}/`), {
-    body: JSON.stringify({
-      deviceName: payload.deviceName ?? 'DVI Heatpump Desktop',
-      metadata: payload.metadata,
-      pairingCode: payload.pairingCode,
-    }),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-    signal: AbortSignal.timeout(5_000),
+  const pairPaths = getPairPaths();
+  const requestBody = JSON.stringify({
+    deviceName: payload.deviceName ?? 'DVI Heatpump Desktop',
+    metadata: payload.metadata,
+    pairingCode: payload.pairingCode,
   });
+  const attemptFailures: string[] = [];
 
-  if (!response.ok) {
-    throw new Error(`Pairing failed with status ${response.status}.`);
+  for (const pairPath of pairPaths) {
+    const pairUrl = new URL(pairPath, `${baseUrl}/`);
+
+    try {
+      const response = await fetch(pairUrl, {
+        body: requestBody,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        method: 'POST',
+        signal: AbortSignal.timeout(5_000),
+      });
+
+      if (!response.ok) {
+        attemptFailures.push(`${pairUrl.toString()} -> HTTP ${response.status}`);
+        continue;
+      }
+
+      const token = extractTokenFromResponse(await readResponseBody(response));
+
+      if (!token) {
+        throw new Error(`Pairing response from ${pairUrl.toString()} did not include a token.`);
+      }
+
+      return {
+        pairedAt: new Date(),
+        token,
+      };
+    } catch (error) {
+      attemptFailures.push(`${pairUrl.toString()} -> ${getErrorMessage(error)}`);
+    }
   }
 
-  const token = extractTokenFromResponse(await readResponseBody(response));
+  throw new Error(`Pairing failed. Attempts: ${attemptFailures.join('; ')}`);
+}
 
-  if (!token) {
-    throw new Error('Pairing response did not include a token.');
-  }
+function getPairPaths(): string[] {
+  const configuredPaths = (process.env.DVI_PAIR_PATHS ?? process.env.DVI_PAIR_PATH ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map(normalizePath);
 
-  return {
-    pairedAt: new Date(),
-    token,
-  };
+  return [...new Set([...configuredPaths, ...DEFAULT_PAIR_PATHS])];
+}
+
+function normalizePath(path: string): string {
+  return path.startsWith('/') ? path : `/${path}`;
 }
 
 async function readResponseBody(response: Response): Promise<unknown> {
@@ -86,4 +117,12 @@ function findStringValue(payload: unknown, keys: string[]): string | null {
   }
 
   return null;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Unexpected pairing error.';
 }

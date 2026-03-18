@@ -22,6 +22,12 @@ export default defineConfig({
     build: {
       outDir: 'dist/preload',
       emptyOutDir: false,
+      rollupOptions: {
+        output: {
+          entryFileNames: 'index.cjs',
+          format: 'cjs',
+        },
+      },
     },
     resolve: {
       alias: {
