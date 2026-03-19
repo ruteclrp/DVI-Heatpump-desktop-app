@@ -10,7 +10,7 @@ import {
   setBridgeOverrideChannel,
   type PairingRequest,
 } from '@shared/connection';
-import { runtimeInfoChannel } from '@shared/runtime';
+import { runtimeInfoChannel, showSettingsPageChannel } from '@shared/runtime';
 import { ConnectionCoordinator } from './connectionCoordinator';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +25,7 @@ let overlaySyncInterval: NodeJS.Timeout | null = null;
 let connectionMonitorInterval: NodeJS.Timeout | null = null;
 let activeNavigationTarget: string | null = null;
 let activeNavigationPromise: Promise<string | null> | null = null;
+let selectedView: 'auto' | 'settings' | 'ui' = 'auto';
 
 if (disableHardwareAcceleration) {
   app.disableHardwareAcceleration();
@@ -105,8 +106,22 @@ async function openPreferredUiInMainWindow(): Promise<string | null> {
     return null;
   }
 
+  selectedView = 'ui';
   const snapshot = await connectionCoordinator.refreshConnection();
   return navigateMainWindowToSnapshot(snapshot);
+}
+
+async function showSettingsPageInMainWindow(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  selectedView = 'settings';
+  protectedOrigin = null;
+  protectedOriginToken = null;
+  activeNavigationTarget = null;
+  activeNavigationPromise = null;
+  await loadShellPage(mainWindow);
 }
 
 async function navigateMainWindowToSnapshot(snapshot: ConnectionSnapshot): Promise<string | null> {
@@ -179,8 +194,44 @@ async function refreshConnectionRouting(): Promise<void> {
   }
 
   const snapshot = await connectionCoordinator.refreshConnection();
+  await applyViewSelection(snapshot);
+}
+
+async function applyViewSelection(snapshot: ConnectionSnapshot): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
   const currentUrl = mainWindow.webContents.getURL();
   const isShellPage = !shouldShowConnectionOverlay(currentUrl);
+
+  if (selectedView === 'settings') {
+    if (!isShellPage) {
+      await loadShellPage(mainWindow);
+    }
+
+    return;
+  }
+
+  if (selectedView === 'ui') {
+    if (isShellPage) {
+      if (snapshot.preferredUiUrl) {
+        await navigateMainWindowToSnapshot(snapshot);
+        return;
+      }
+    } else {
+      const currentOrigin = tryGetOrigin(currentUrl);
+      const preferredOrigin = tryGetOrigin(snapshot.preferredUiUrl);
+
+      if (snapshot.preferredUiUrl && currentOrigin !== preferredOrigin) {
+        await navigateMainWindowToSnapshot(snapshot);
+        return;
+      }
+    }
+
+    await syncConnectionOverlay(mainWindow, snapshot);
+    return;
+  }
 
   if (isShellPage) {
     if (snapshot.preferredUiUrl) {
@@ -198,6 +249,22 @@ async function refreshConnectionRouting(): Promise<void> {
   }
 
   await syncConnectionOverlay(mainWindow, snapshot);
+}
+
+async function loadShellPage(window: BrowserWindow): Promise<void> {
+  const devServerUrl = process.env.ELECTRON_RENDERER_URL;
+
+  if (devServerUrl) {
+    const currentUrl = window.webContents.getURL();
+
+    if (currentUrl !== devServerUrl) {
+      await window.loadURL(devServerUrl);
+    }
+
+    return;
+  }
+
+  await window.loadFile(join(currentDir, '../renderer/index.html'));
 }
 
 async function syncConnectionOverlay(
@@ -243,6 +310,10 @@ async function syncConnectionOverlay(
         '<div><dt>URL</dt><dd class="dvi-desktop-connection-overlay__url">' + escapeHtml(data.connectedUrl) + '</dd></div>',
         '<div><dt>Token auth</dt><dd>' + escapeHtml(data.tokenAuth) + '</dd></div>',
         '</dl>',
+        '<div class="dvi-desktop-connection-overlay__actions">',
+        '<button type="button" class="dvi-desktop-connection-overlay__button" id="dvi-desktop-open-settings">Settings</button>',
+        '</div>',
+        '<p class="dvi-desktop-connection-overlay__status" id="dvi-desktop-overlay-status"></p>',
       ].join('');
 
       Object.assign(panel.style, {
@@ -279,6 +350,10 @@ async function syncConnectionOverlay(
         '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__title { font-size: 13px; font-weight: 700; margin-bottom: 10px; letter-spacing: 0.02em; }',
         '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__list { display: grid; gap: 6px; margin: 0; }',
         '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__list div { display: grid; grid-template-columns: 88px 1fr; gap: 8px; align-items: start; }',
+        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__actions { display: flex; gap: 8px; margin-top: 14px; }',
+        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__button { appearance: none; border: 0; border-radius: 999px; padding: 10px 14px; background: #f5f7fa; color: #0f1822; cursor: pointer; font: inherit; font-weight: 700; }',
+        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__button:disabled { opacity: 0.65; cursor: progress; }',
+        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__status { margin: 10px 0 0; color: rgba(245,247,250,0.72); min-height: 1.35em; }',
         '#dvi-desktop-connection-overlay dt { margin: 0; color: rgba(245,247,250,0.72); font-weight: 600; }',
         '#dvi-desktop-connection-overlay dd { margin: 0; font-weight: 500; word-break: break-word; }',
         '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__url { font-family: Consolas, "SFMono-Regular", monospace; font-size: 11px; }',
@@ -287,6 +362,31 @@ async function syncConnectionOverlay(
 
       panel.appendChild(style);
       document.body.appendChild(panel);
+
+      const openSettingsButton = document.getElementById('dvi-desktop-open-settings');
+      const statusElement = document.getElementById('dvi-desktop-overlay-status');
+
+      openSettingsButton?.addEventListener('click', async () => {
+        if (!window.dviDesktop?.showSettingsPage) {
+          if (statusElement) {
+            statusElement.textContent = 'Settings view is not available in this build.';
+          }
+
+          return;
+        }
+
+        openSettingsButton.disabled = true;
+
+        try {
+          await window.dviDesktop.showSettingsPage();
+        } catch {
+          if (statusElement) {
+            statusElement.textContent = 'Failed to open settings view.';
+          }
+
+          openSettingsButton.disabled = false;
+        }
+      });
 
       function escapeHtml(value) {
         return String(value)
@@ -372,13 +472,24 @@ function tryGetOrigin(url: string | null): string | null {
 app.whenReady().then(() => {
   ipcMain.handle(runtimeInfoChannel, () => connectionCoordinator.getRuntimeInfo());
   ipcMain.handle(getConnectionSnapshotChannel, () => connectionCoordinator.getSnapshot());
-  ipcMain.handle(refreshConnectionChannel, () => connectionCoordinator.refreshConnection());
+  ipcMain.handle(refreshConnectionChannel, async () => {
+    const snapshot = await connectionCoordinator.refreshConnection();
+    await applyViewSelection(snapshot);
+    return snapshot;
+  });
   ipcMain.handle(openPreferredUiChannel, () => openPreferredUiInMainWindow());
+  ipcMain.handle(showSettingsPageChannel, () => showSettingsPageInMainWindow());
   ipcMain.handle(setBridgeOverrideChannel, (_event: IpcMainInvokeEvent, baseUrl: string | null) =>
-    connectionCoordinator.setBridgeOverride(baseUrl),
+    connectionCoordinator.setBridgeOverride(baseUrl).then(async (snapshot) => {
+      await applyViewSelection(snapshot);
+      return snapshot;
+    }),
   );
   ipcMain.handle(pairBridgeChannel, (_event: IpcMainInvokeEvent, request: PairingRequest) =>
-    connectionCoordinator.pairBridge(request),
+    connectionCoordinator.pairBridge(request).then(async (snapshot) => {
+      await applyViewSelection(snapshot);
+      return snapshot;
+    }),
   );
 
   mainWindow = createMainWindow();

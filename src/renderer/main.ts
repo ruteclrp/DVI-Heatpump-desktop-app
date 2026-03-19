@@ -73,7 +73,6 @@ function bindRefreshAction(): void {
     try {
       const snapshot = await window.dviDesktop.refreshConnection();
       await renderConnectionSnapshot(snapshot);
-      await maybeOpenPreferredUi(snapshot, connectionSummaryElement);
     } catch (error) {
       if (connectionSummaryElement) {
         connectionSummaryElement.textContent = getErrorMessage(error);
@@ -107,7 +106,6 @@ function bindPairingForm(): void {
       const snapshot = await window.dviDesktop.pairBridge(request);
       pairingStatusElement.textContent = 'Pairing succeeded. Token stored securely.';
       await renderConnectionSnapshot(snapshot);
-      await maybeOpenPreferredUi(snapshot, pairingStatusElement);
     } catch (error) {
       pairingStatusElement.textContent = getErrorMessage(error);
     }
@@ -143,7 +141,6 @@ function bindBridgeOverrideForm(): void {
         ? 'Bridge override saved. Refreshing via the configured URL.'
         : 'Bridge override cleared.';
       await renderConnectionSnapshot(snapshot);
-      await maybeOpenPreferredUi(snapshot, bridgeOverrideStatusElement);
     } catch (error) {
       bridgeOverrideStatusElement.textContent = getErrorMessage(error);
     }
@@ -166,7 +163,6 @@ function bindBridgeOverrideForm(): void {
       const snapshot = await window.dviDesktop.setBridgeOverride(null);
       bridgeOverrideStatusElement.textContent = 'Bridge override cleared.';
       await renderConnectionSnapshot(snapshot);
-      await maybeOpenPreferredUi(snapshot, bridgeOverrideStatusElement);
     } catch (error) {
       bridgeOverrideStatusElement.textContent = getErrorMessage(error);
     }
@@ -217,23 +213,6 @@ function getErrorMessage(error: unknown): string {
   return 'Unexpected pairing error.';
 }
 
-async function maybeOpenPreferredUi(
-  snapshot: ConnectionSnapshot,
-  statusElement?: HTMLElement | null,
-): Promise<void> {
-  if (!snapshot.preferredUiUrl) {
-    return;
-  }
-
-  try {
-    await window.dviDesktop.openPreferredUi();
-  } catch (error) {
-    if (statusElement) {
-      statusElement.textContent = `UI navigation failed: ${getErrorMessage(error)}`;
-    }
-  }
-}
-
 function getTunnelStatus(snapshot: ConnectionSnapshot): string {
   if (snapshot.remoteTunnel) {
     return 'fetched';
@@ -277,10 +256,7 @@ function escapeHtml(value: string): string {
 }
 
 void renderRuntimeInfo();
-void renderConnectionSnapshot().then(async () => {
-  const snapshot = await window.dviDesktop.getConnectionSnapshot();
-  await maybeOpenPreferredUi(snapshot, document.querySelector<HTMLElement>('#connection-summary'));
-});
+void renderConnectionSnapshot();
 bindRefreshAction();
 bindPairingForm();
 bindBridgeOverrideForm();

@@ -13,6 +13,8 @@ export interface DviDesktopApi {
   pairBridge: (request: PairingRequest) => Promise<ConnectionSnapshot>;
   refreshConnection: () => Promise<ConnectionSnapshot>;
   setBridgeOverride: (baseUrl: string | null) => Promise<ConnectionSnapshot>;
+  showSettingsPage: () => Promise<void>;
 }
 
 export const runtimeInfoChannel = 'app:get-runtime-info';
+export const showSettingsPageChannel = 'app:show-settings-page';

@@ -7,7 +7,7 @@ import {
   setBridgeOverrideChannel,
   type PairingRequest,
 } from '@shared/connection';
-import { runtimeInfoChannel, type DviDesktopApi } from '@shared/runtime';
+import { runtimeInfoChannel, showSettingsPageChannel, type DviDesktopApi } from '@shared/runtime';
 
 const api: DviDesktopApi = {
   getConnectionSnapshot: () => ipcRenderer.invoke(getConnectionSnapshotChannel),
@@ -16,6 +16,7 @@ const api: DviDesktopApi = {
   pairBridge: (request: PairingRequest) => ipcRenderer.invoke(pairBridgeChannel, request),
   refreshConnection: () => ipcRenderer.invoke(refreshConnectionChannel),
   setBridgeOverride: (baseUrl: string | null) => ipcRenderer.invoke(setBridgeOverrideChannel, baseUrl),
+  showSettingsPage: () => ipcRenderer.invoke(showSettingsPageChannel),
 };
 
 contextBridge.exposeInMainWorld('dviDesktop', api);
