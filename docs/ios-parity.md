@@ -33,7 +33,8 @@ The Windows desktop app should reproduce the connection behavior of the existing
 
 ## Current desktop implementation note
 
-The first desktop implementation uses configured bridge URLs plus private-subnet probing as a stand-in for the iOS discovery flow. This should be replaced or narrowed once the actual iOS discovery strategy is confirmed.
+The desktop implementation now uses configured bridge URLs plus Bonjour discovery for `_dvi-bridge._tcp` as the local-network discovery path, matching the current iOS app more closely than the earlier subnet-probing approximation.
+When a local bridge is discovered, the desktop shell also refreshes token and tunnel metadata automatically in the main process instead of exposing manual pairing in the renderer.
 
 ## First implementation slices
 

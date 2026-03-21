@@ -3,7 +3,7 @@ export type ConnectionTransport = 'local' | 'remote' | 'offline';
 export interface BridgeConnectionInfo {
   baseUrl: string;
   discoveredAt: string;
-  source: 'configured' | 'manual' | 'subnet-scan';
+  source: 'configured' | 'manual' | 'mdns';
 }
 
 export interface RemoteTunnelConnectionInfo {
@@ -23,14 +23,8 @@ export interface ConnectionSnapshot {
   remoteTunnel: RemoteTunnelConnectionInfo | null;
 }
 
-export interface PairingRequest {
-  deviceName?: string;
-  metadata?: Record<string, string | number | boolean>;
-  pairingCode?: string;
-}
-
+export const clearStoredConnectionStateChannel = 'connection:clear-stored-state';
 export const getConnectionSnapshotChannel = 'connection:get-snapshot';
 export const openPreferredUiChannel = 'connection:open-preferred-ui';
-export const pairBridgeChannel = 'connection:pair-bridge';
 export const refreshConnectionChannel = 'connection:refresh';
 export const setBridgeOverrideChannel = 'connection:set-bridge-override';

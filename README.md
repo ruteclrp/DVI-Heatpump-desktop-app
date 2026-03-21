@@ -69,27 +69,29 @@ The packaged installer bundles the Electron runtime, so the end user does not ne
 
 The current implementation keeps connection logic in the Electron main process:
 
-- local bridge discovery checks configured bridge URLs first, then probes private IPv4 home-network ranges on the active adapters
-- a manual bridge URL override can be saved in the app UI for VPN cases where subnet discovery cannot prove that the bridge is on the same LAN segment
-- pairing calls `POST /pair` and stores the resulting token with `keytar`
-- tunnel refresh calls `GET /api/tunnel` and uses `Authorization: Bearer <token>` when a stored token is available
+- local bridge discovery checks configured bridge URLs first, then browses for `_dvi-bridge._tcp` over Bonjour/mDNS on the local network
+- a manual bridge URL override can be saved in the app UI for VPN cases where automatic local discovery is not the right choice
+- when a local bridge is found, the desktop shell automatically refreshes the token with `POST /pair` and stores it with `keytar`
+- tunnel refresh calls `GET /api/tunnel` and prefers `Authorization: Bearer <token>` when a stored token is available
 - the last successful tunnel URL is cached in the app data directory so remote mode can still be selected when the bridge is no longer reachable
 - the renderer only receives a connection snapshot and pairing/refresh commands through preload IPC
 
 ## Useful Environment Overrides
 
 - `DVI_BRIDGE_URL` or `DVI_BRIDGE_URLS`: explicitly set one or more candidate local bridge URLs
-- `DVI_BRIDGE_PORT`: override the default local bridge port used during subnet probing
-- `DVI_BRIDGE_PROTOCOL`: choose `http` or `https` for generated bridge probe URLs
+- `DVI_BRIDGE_PORT`: override the default local bridge port used when normalizing local manual bridge URLs
+- `DVI_BRIDGE_PROTOCOL`: choose `http` or `https` for generated local bridge URLs
 - `DVI_BRIDGE_DISCOVERY_PATH`: override the primary bridge-specific probe path used to test whether a bridge is reachable
 - `DVI_BRIDGE_DISCOVERY_PATHS`: override or extend the list of bridge-specific probe paths used during discovery
 - `DVI_BRIDGE_DISCOVERY_TIMEOUT_MS`: adjust the per-host probe timeout
-- `DVI_BRIDGE_DISCOVERY_CONCURRENCY`: adjust how many subnet probes run in parallel
+- `DVI_BRIDGE_DISCOVERY_CONCURRENCY`: adjust how many resolved discovery candidates are probed in parallel
+- `DVI_BRIDGE_DISCOVERY_WINDOW_MS`: adjust how long Bonjour discovery listens for `_dvi-bridge._tcp` services before falling back
+- `DVI_BRIDGE_MDNS_SERVICE_TYPE`: override the Bonjour service type name if the bridge advertises a different `_type._tcp` service
 - `DVI_PAIR_PATH` or `DVI_PAIR_PATHS`: override or extend the pair endpoint path candidates when the bridge does not expose `POST /pair` at the root
 - `DVI_TUNNEL_PATH` or `DVI_TUNNEL_PATHS`: override or extend the tunnel endpoint path candidates when the bridge does not expose `GET /api/tunnel`
 - `DVI_DISABLE_HARDWARE_ACCELERATION`: set to `0` to re-enable Chromium GPU acceleration if you want to compare rendering behavior
 
-The discovery implementation is still a desktop-side approximation until the exact iOS discovery mechanism is verified.
+The discovery implementation now follows the iOS app's Bonjour model for local bridge discovery and keeps the manual override as an explicit fallback.
 
 ## Next Build Steps
 

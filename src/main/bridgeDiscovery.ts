@@ -1,9 +1,10 @@
-import { networkInterfaces } from 'node:os';
+import * as BonjourService from 'bonjour-service';
+import type { Service } from 'bonjour-service';
 
 export interface DiscoveredBridge {
   baseUrl: string;
   discoveredAt: Date;
-  source: 'configured' | 'manual' | 'subnet-scan';
+  source: 'configured' | 'manual' | 'mdns';
 }
 
 interface DiscoveryCandidate {
@@ -15,37 +16,37 @@ interface DiscoveryOptions {
   configuredBridgeUrls?: string[];
 }
 
-const DEFAULT_BRIDGE_PORT = Number(process.env.DVI_BRIDGE_PORT ?? '80');
+const DEFAULT_BRIDGE_PORT = Number(process.env.DVI_BRIDGE_PORT ?? '5000');
 const DEFAULT_BRIDGE_PROTOCOL = process.env.DVI_BRIDGE_PROTOCOL === 'https' ? 'https' : 'http';
 const DEFAULT_DISCOVERY_PATH = process.env.DVI_BRIDGE_DISCOVERY_PATH ?? '/api/pump_type';
 const DEFAULT_DISCOVERY_TIMEOUT_MS = Number(process.env.DVI_BRIDGE_DISCOVERY_TIMEOUT_MS ?? '350');
 const DEFAULT_DISCOVERY_CONCURRENCY = Number(process.env.DVI_BRIDGE_DISCOVERY_CONCURRENCY ?? '24');
-const DEFAULT_DISCOVERY_PATHS = [DEFAULT_DISCOVERY_PATH, '/api/pump_type', '/health'];
+const DEFAULT_DISCOVERY_WINDOW_MS = Number(process.env.DVI_BRIDGE_DISCOVERY_WINDOW_MS ?? '10000');
+const DEFAULT_DISCOVERY_PATHS = [DEFAULT_DISCOVERY_PATH, '/api/pump_type'];
+const DEFAULT_MDNS_SERVICE_TYPE = process.env.DVI_BRIDGE_MDNS_SERVICE_TYPE ?? 'dvi-bridge';
+const BonjourConstructor = getBonjourConstructor();
 
 export async function discoverBridge(options: DiscoveryOptions = {}): Promise<DiscoveredBridge | null> {
-  const candidates = buildDiscoveryCandidates(options);
+  const configuredCandidates = dedupeCandidates(getConfiguredCandidates(options.configuredBridgeUrls ?? []));
+  const configuredBridge = await findPreferredReachableBaseUrl(configuredCandidates);
 
-  if (candidates.length === 0) {
-    return null;
+  if (configuredBridge) {
+    return {
+      ...configuredBridge,
+      discoveredAt: new Date(),
+    };
   }
 
-  const reachableBaseUrl = await findPreferredReachableBaseUrl(candidates);
+  const mdnsCandidates = dedupeCandidates(await getMdnsCandidates());
 
-  if (!reachableBaseUrl) {
+  if (mdnsCandidates.length === 0) {
     return null;
   }
 
   return {
-    ...reachableBaseUrl,
+    ...mdnsCandidates[0],
     discoveredAt: new Date(),
   };
-}
-
-function buildDiscoveryCandidates(options: DiscoveryOptions): DiscoveryCandidate[] {
-  const configuredCandidates = getConfiguredCandidates(options.configuredBridgeUrls ?? []);
-  const subnetCandidates = getSubnetCandidates();
-
-  return dedupeCandidates([...configuredCandidates, ...subnetCandidates]);
 }
 
 function getConfiguredCandidates(configuredBridgeUrls: string[]): DiscoveryCandidate[] {
@@ -70,36 +71,6 @@ function getConfiguredCandidates(configuredBridgeUrls: string[]): DiscoveryCandi
   return [...manualCandidates, ...envCandidates];
 }
 
-function getSubnetCandidates(): DiscoveryCandidate[] {
-  const interfaces = networkInterfaces();
-  const candidates: DiscoveryCandidate[] = [];
-
-  for (const adapterName of Object.keys(interfaces)) {
-    const adapterEntries = interfaces[adapterName];
-
-    if (!adapterEntries) {
-      continue;
-    }
-
-    for (const entry of adapterEntries) {
-      if (entry.family !== 'IPv4' || entry.internal || !isPrivateIpv4Address(entry.address)) {
-        continue;
-      }
-
-      const subnetPrefix = entry.address.split('.').slice(0, 3).join('.');
-
-      for (let host = 1; host <= 254; host += 1) {
-        candidates.push({
-          baseUrl: `${DEFAULT_BRIDGE_PROTOCOL}://${subnetPrefix}.${host}:${DEFAULT_BRIDGE_PORT}`,
-          source: 'subnet-scan',
-        });
-      }
-    }
-  }
-
-  return candidates;
-}
-
 function dedupeCandidates(candidates: DiscoveryCandidate[]): DiscoveryCandidate[] {
   const seen = new Set<string>();
 
@@ -113,26 +84,19 @@ function dedupeCandidates(candidates: DiscoveryCandidate[]): DiscoveryCandidate[
   });
 }
 
-function isPrivateIpv4Address(address: string): boolean {
-  if (address.startsWith('10.')) {
-    return true;
-  }
-
-  if (address.startsWith('192.168.')) {
-    return true;
-  }
-
-  const octets = address.split('.').map((segment) => Number(segment));
-
-  return octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31;
-}
-
 export function normalizeBridgeBaseUrl(value: string): string {
-  if (value.startsWith('http://') || value.startsWith('https://')) {
-    return value.replace(/\/+$/, '');
+  const trimmedValue = value.trim().replace(/\/+$/, '');
+
+  if (trimmedValue.startsWith('http://') || trimmedValue.startsWith('https://')) {
+    return trimmedValue;
   }
 
-  return `${DEFAULT_BRIDGE_PROTOCOL}://${value.replace(/\/+$/, '')}`;
+  if (isLocalBridgeHost(trimmedValue)) {
+    const withPort = hasExplicitPort(trimmedValue) ? trimmedValue : `${trimmedValue}:${DEFAULT_BRIDGE_PORT}`;
+    return `http://${withPort}`;
+  }
+
+  return `https://${trimmedValue}`;
 }
 
 async function findFirstReachableBaseUrl(
@@ -165,7 +129,7 @@ async function findFirstReachableBaseUrl(
 async function findPreferredReachableBaseUrl(
   candidates: DiscoveryCandidate[],
 ): Promise<DiscoveryCandidate | null> {
-  const sourcePriority: Array<DiscoveryCandidate['source']> = ['manual', 'configured', 'subnet-scan'];
+  const sourcePriority: Array<DiscoveryCandidate['source']> = ['manual', 'configured'];
 
   for (const source of sourcePriority) {
     const sourceCandidates = candidates.filter((candidate) => candidate.source === source);
@@ -182,6 +146,161 @@ async function findPreferredReachableBaseUrl(
   }
 
   return null;
+}
+
+async function getMdnsCandidates(): Promise<DiscoveryCandidate[]> {
+  const services = await discoverMdnsServices();
+
+  return services.flatMap((service) => buildMdnsCandidates(service));
+}
+
+async function discoverMdnsServices(): Promise<Service[]> {
+  const bonjour = new BonjourConstructor();
+  const discoveredServices = new Map<string, Service>();
+  const browser = bonjour.find({
+    protocol: 'tcp',
+    type: DEFAULT_MDNS_SERVICE_TYPE,
+  });
+
+  const rememberService = (service: Service): void => {
+    discoveredServices.set(service.fqdn ?? `${service.name}:${service.port}`, service);
+  };
+
+  browser.on('up', rememberService);
+  browser.on('txt-update', rememberService);
+
+  try {
+    await wait(DEFAULT_DISCOVERY_WINDOW_MS);
+  } finally {
+    browser.stop();
+    bonjour.destroy();
+  }
+
+  return [...discoveredServices.values()];
+}
+
+function buildMdnsCandidates(service: Service): DiscoveryCandidate[] {
+  const port = service.port > 0 ? service.port : DEFAULT_BRIDGE_PORT;
+  const txtHostname = getTxtValue(service, 'hostname');
+  const candidateHosts = dedupeTextValues([
+    normalizeMdnsHost(txtHostname),
+    ...getIpv4Addresses(service),
+    normalizeMdnsHost(service.host),
+  ]);
+
+  return candidateHosts.map((host) => ({
+    baseUrl: `${DEFAULT_BRIDGE_PROTOCOL}://${host}:${port}`,
+    source: 'mdns',
+  }));
+}
+
+function getTxtValue(service: Service, key: string): string | null {
+  const value = service.txt?.[key];
+
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeMdnsHost(value: string | undefined | null): string | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const host = value.trim().replace(/\.$/, '');
+
+  if (isIpv4Address(host)) {
+    return host;
+  }
+
+  if (host.endsWith('.local') || host.includes('.')) {
+    return host;
+  }
+
+  return `${host}.local`;
+}
+
+function getIpv4Addresses(service: Service): string[] {
+  return (service.addresses ?? []).filter((address) => isIpv4Address(address));
+}
+
+function isIpv4Address(value: string): boolean {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value);
+}
+
+function dedupeTextValues(values: Array<string | null>): string[] {
+  const seen = new Set<string>();
+  const dedupedValues: string[] = [];
+
+  for (const value of values) {
+    if (!value || seen.has(value)) {
+      continue;
+    }
+
+    seen.add(value);
+    dedupedValues.push(value);
+  }
+
+  return dedupedValues;
+}
+
+function isLocalBridgeHost(value: string): boolean {
+  const host = value.split('/')[0].split(':')[0];
+
+  if (host.endsWith('.local')) {
+    return true;
+  }
+
+  if (/^pump-\d+-owner$/i.test(host)) {
+    return true;
+  }
+
+  return isIpv4Address(host);
+}
+
+function hasExplicitPort(value: string): boolean {
+  const lastColonIndex = value.lastIndexOf(':');
+
+  if (lastColonIndex === -1) {
+    return false;
+  }
+
+  return /^\d+$/.test(value.slice(lastColonIndex + 1));
+}
+
+function wait(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
+}
+
+function getBonjourConstructor(): new () => {
+  destroy(callback?: () => void): void;
+  find(
+    options: { protocol: 'tcp' | 'udp'; type: string },
+  ): {
+    on(event: 'up' | 'txt-update', listener: (service: Service) => void): void;
+    stop(): void;
+  };
+} {
+  const constructorCandidate =
+    typeof BonjourService.Bonjour === 'function'
+      ? BonjourService.Bonjour
+      : typeof BonjourService.default === 'function'
+        ? BonjourService.default
+        : null;
+
+  if (!constructorCandidate) {
+    throw new Error('Bonjour service module did not expose a constructor.');
+  }
+
+  return constructorCandidate as new () => {
+    destroy(callback?: () => void): void;
+    find(
+      options: { protocol: 'tcp' | 'udp'; type: string },
+    ): {
+      on(event: 'up' | 'txt-update', listener: (service: Service) => void): void;
+      stop(): void;
+    };
+  };
 }
 
 async function probeBridge(baseUrl: string): Promise<boolean> {

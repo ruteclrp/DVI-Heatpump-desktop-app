@@ -8,19 +8,19 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="hero">
+      <section class="hero hero-panel">
         <p class="eyebrow">Windows desktop shell</p>
         <h1>DVI Heatpump</h1>
         <p class="lede">
-          Electron host scaffold for local bridge discovery, pairing, tunnel refresh,
-          and secure token handling.
+          Electron host scaffold for local bridge discovery, tunnel refresh, and
+          secure token handling.
         </p>
       </section>
-      <section class="status-card">
+      <section class="status-card runtime-card">
         <h2>Runtime</h2>
         <dl id="runtime-info"></dl>
       </section>
-      <section class="status-card">
+      <section class="status-card connection-card">
         <div class="card-header">
           <div>
             <p class="eyebrow">Connection</p>
@@ -32,7 +32,11 @@
         <dl id="connection-info"></dl>
         <div class="action-row">
           <button id="open-preferred-ui" type="button">Switch to UI view</button>
+          <button id="clear-stored-connection-state" type="button" class="secondary-button">
+            Clear token and tunnel
+          </button>
         </div>
+        <p id="clear-stored-connection-status" class="summary-text"></p>
         <form id="bridge-override-form" class="pairing-form compact-form">
           <label>
             <span>Bridge URL override for VPN</span>
@@ -49,26 +53,6 @@
           </div>
         </form>
         <p id="bridge-override-status" class="summary-text"></p>
-      </section>
-      <section class="status-card">
-        <div class="card-header">
-          <div>
-            <p class="eyebrow">Pairing</p>
-            <h2>Fetch and store token</h2>
-          </div>
-        </div>
-        <form id="pairing-form" class="pairing-form">
-          <label>
-            <span>Pairing code</span>
-            <input id="pairing-code" name="pairingCode" type="password" autocomplete="off" />
-          </label>
-          <label>
-            <span>Device name</span>
-            <input id="device-name" name="deviceName" type="text" value="DVI Heatpump Desktop" />
-          </label>
-          <button id="pair-bridge" type="submit">Pair with bridge</button>
-        </form>
-        <p id="pairing-status" class="summary-text"></p>
       </section>
     </main>
   </body>

@@ -1,5 +1,5 @@
 import './styles.css';
-import type { ConnectionSnapshot, PairingRequest } from '@shared/connection';
+import type { ConnectionSnapshot } from '@shared/connection';
 import type { DviDesktopApi } from '@shared/runtime';
 
 declare global {
@@ -28,6 +28,7 @@ async function renderConnectionSnapshot(snapshot?: ConnectionSnapshot): Promise<
   const connectionInfoElement = document.querySelector<HTMLDListElement>('#connection-info');
   const connectionSummaryElement = document.querySelector<HTMLElement>('#connection-summary');
   const bridgeOverrideInput = document.querySelector<HTMLInputElement>('#bridge-override-url');
+  const clearStoredConnectionStatusElement = document.querySelector<HTMLElement>('#clear-stored-connection-status');
   const openPreferredUiButton = document.querySelector<HTMLButtonElement>('#open-preferred-ui');
 
   if (!connectionInfoElement || !connectionSummaryElement) {
@@ -47,6 +48,10 @@ async function renderConnectionSnapshot(snapshot?: ConnectionSnapshot): Promise<
 
   if (openPreferredUiButton) {
     openPreferredUiButton.disabled = !connectionSnapshot.preferredUiUrl;
+  }
+
+  if (clearStoredConnectionStatusElement && !clearStoredConnectionStatusElement.dataset.pending) {
+    clearStoredConnectionStatusElement.textContent = '';
   }
 
   connectionInfoElement.innerHTML = `
@@ -79,35 +84,6 @@ function bindRefreshAction(): void {
       }
     } finally {
       refreshButton.disabled = false;
-    }
-  });
-}
-
-function bindPairingForm(): void {
-  const pairingForm = document.querySelector<HTMLFormElement>('#pairing-form');
-  const pairingStatusElement = document.querySelector<HTMLElement>('#pairing-status');
-
-  pairingForm?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-
-    if (!pairingStatusElement) {
-      return;
-    }
-
-    const formData = new FormData(pairingForm);
-    const request: PairingRequest = {
-      deviceName: getOptionalFormValue(formData.get('deviceName')),
-      pairingCode: getOptionalFormValue(formData.get('pairingCode')),
-    };
-
-    pairingStatusElement.textContent = 'Pairing in progress...';
-
-    try {
-      const snapshot = await window.dviDesktop.pairBridge(request);
-      pairingStatusElement.textContent = 'Pairing succeeded. Token stored securely.';
-      await renderConnectionSnapshot(snapshot);
-    } catch (error) {
-      pairingStatusElement.textContent = getErrorMessage(error);
     }
   });
 }
@@ -169,6 +145,38 @@ function bindBridgeOverrideForm(): void {
   });
 }
 
+function bindClearStoredConnectionStateAction(): void {
+  const clearButton = document.querySelector<HTMLButtonElement>('#clear-stored-connection-state');
+  const statusElement = document.querySelector<HTMLElement>('#clear-stored-connection-status');
+
+  clearButton?.addEventListener('click', async () => {
+    if (!statusElement) {
+      return;
+    }
+
+    if (!supportsStoredConnectionReset()) {
+      statusElement.textContent =
+        'Stored connection reset is not available in the current preload script. Restart npm run dev and try again.';
+      return;
+    }
+
+    clearButton.disabled = true;
+    statusElement.dataset.pending = 'true';
+    statusElement.textContent = 'Clearing stored token and cached tunnel...';
+
+    try {
+      const snapshot = await window.dviDesktop.clearStoredConnectionState();
+      statusElement.textContent = 'Stored token and cached tunnel cleared. Use Refresh to trigger auto-sync again.';
+      await renderConnectionSnapshot(snapshot);
+    } catch (error) {
+      statusElement.textContent = getErrorMessage(error);
+    } finally {
+      delete statusElement.dataset.pending;
+      clearButton.disabled = false;
+    }
+  });
+}
+
 function bindOpenPreferredUiAction(): void {
   const openPreferredUiButton = document.querySelector<HTMLButtonElement>('#open-preferred-ui');
   const connectionSummaryElement = document.querySelector<HTMLElement>('#connection-summary');
@@ -194,6 +202,10 @@ function bindOpenPreferredUiAction(): void {
 
 function supportsBridgeOverride(): boolean {
   return typeof window.dviDesktop?.setBridgeOverride === 'function';
+}
+
+function supportsStoredConnectionReset(): boolean {
+  return typeof window.dviDesktop?.clearStoredConnectionState === 'function';
 }
 
 function getOptionalFormValue(value: FormDataEntryValue | null): string | undefined {
@@ -258,6 +270,6 @@ function escapeHtml(value: string): string {
 void renderRuntimeInfo();
 void renderConnectionSnapshot();
 bindRefreshAction();
-bindPairingForm();
 bindBridgeOverrideForm();
+bindClearStoredConnectionStateAction();
 bindOpenPreferredUiAction();

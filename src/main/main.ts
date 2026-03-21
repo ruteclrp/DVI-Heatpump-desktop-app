@@ -2,13 +2,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import {
+  clearStoredConnectionStateChannel,
   getConnectionSnapshotChannel,
   openPreferredUiChannel,
-  pairBridgeChannel,
   refreshConnectionChannel,
   type ConnectionSnapshot,
   setBridgeOverrideChannel,
-  type PairingRequest,
 } from '@shared/connection';
 import { runtimeInfoChannel, showSettingsPageChannel } from '@shared/runtime';
 import { ConnectionCoordinator } from './connectionCoordinator';
@@ -472,6 +471,7 @@ function tryGetOrigin(url: string | null): string | null {
 app.whenReady().then(() => {
   ipcMain.handle(runtimeInfoChannel, () => connectionCoordinator.getRuntimeInfo());
   ipcMain.handle(getConnectionSnapshotChannel, () => connectionCoordinator.getSnapshot());
+  ipcMain.handle(clearStoredConnectionStateChannel, () => connectionCoordinator.clearStoredConnectionState());
   ipcMain.handle(refreshConnectionChannel, async () => {
     const snapshot = await connectionCoordinator.refreshConnection();
     await applyViewSelection(snapshot);
@@ -481,12 +481,6 @@ app.whenReady().then(() => {
   ipcMain.handle(showSettingsPageChannel, () => showSettingsPageInMainWindow());
   ipcMain.handle(setBridgeOverrideChannel, (_event: IpcMainInvokeEvent, baseUrl: string | null) =>
     connectionCoordinator.setBridgeOverride(baseUrl).then(async (snapshot) => {
-      await applyViewSelection(snapshot);
-      return snapshot;
-    }),
-  );
-  ipcMain.handle(pairBridgeChannel, (_event: IpcMainInvokeEvent, request: PairingRequest) =>
-    connectionCoordinator.pairBridge(request).then(async (snapshot) => {
       await applyViewSelection(snapshot);
       return snapshot;
     }),

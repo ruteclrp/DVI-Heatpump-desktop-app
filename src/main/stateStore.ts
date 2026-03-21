@@ -55,6 +55,15 @@ export async function saveCachedTunnel(tunnel: TunnelInfo): Promise<void> {
   });
 }
 
+export async function clearCachedTunnel(): Promise<void> {
+  const state = await loadStateFile();
+
+  await writeStateFile({
+    ...state,
+    remoteTunnel: null,
+  });
+}
+
 async function loadStateFile(): Promise<PersistedState> {
   try {
     const stateJson = await readFile(getStateFilePath(), 'utf8');

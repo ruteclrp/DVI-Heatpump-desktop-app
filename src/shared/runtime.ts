@@ -1,4 +1,4 @@
-import type { ConnectionSnapshot, PairingRequest } from './connection';
+import type { ConnectionSnapshot } from './connection';
 
 export interface AppRuntimeInfo {
   platform: NodeJS.Platform;
@@ -7,10 +7,10 @@ export interface AppRuntimeInfo {
 }
 
 export interface DviDesktopApi {
+  clearStoredConnectionState: () => Promise<ConnectionSnapshot>;
   getConnectionSnapshot: () => Promise<ConnectionSnapshot>;
   getRuntimeInfo: () => Promise<AppRuntimeInfo>;
   openPreferredUi: () => Promise<string | null>;
-  pairBridge: (request: PairingRequest) => Promise<ConnectionSnapshot>;
   refreshConnection: () => Promise<ConnectionSnapshot>;
   setBridgeOverride: (baseUrl: string | null) => Promise<ConnectionSnapshot>;
   showSettingsPage: () => Promise<void>;
