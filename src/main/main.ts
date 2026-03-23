@@ -1,6 +1,15 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  WebContentsView,
+  ipcMain,
+  screen,
+  shell,
+  type IpcMainInvokeEvent,
+  type WebContents,
+} from 'electron';
 import {
   clearStoredConnectionStateChannel,
   getConnectionSnapshotChannel,
@@ -16,63 +25,239 @@ const currentDir = dirname(fileURLToPath(import.meta.url));
 const connectionCoordinator = new ConnectionCoordinator();
 const disableHardwareAcceleration = process.env.DVI_DISABLE_HARDWARE_ACCELERATION !== '0';
 const CONNECTION_MONITOR_INTERVAL_MS = Number(process.env.DVI_CONNECTION_MONITOR_INTERVAL_MS ?? '10000');
+const SHELL_DEFAULT_HEIGHT_PX = 940;
+const SHELL_DEFAULT_VIEWPORT_MARGIN_PX = 80;
+const SHELL_DESIRED_CONTENT_WIDTH_PX = 1080;
+const SHELL_GAP_PX = 16;
+const SHELL_MIN_CONTENT_WIDTH_PX = 860;
+const SHELL_MIN_HEIGHT_PX = 760;
+const SHELL_PADDING_PX = 16;
+const SHELL_SIDEPANEL_WIDTH_PX = 360;
 let mainWindow: BrowserWindow | null = null;
+let bridgeView: WebContentsView | null = null;
+let bridgeViewAttached = false;
 let protectedOrigin: string | null = null;
 let protectedOriginToken: string | null = null;
 let authHandlerRegistered = false;
-let overlaySyncInterval: NodeJS.Timeout | null = null;
 let connectionMonitorInterval: NodeJS.Timeout | null = null;
 let activeNavigationTarget: string | null = null;
 let activeNavigationPromise: Promise<string | null> | null = null;
 let selectedView: 'auto' | 'settings' | 'ui' = 'auto';
+const popupWindows = new Set<BrowserWindow>();
 
 if (disableHardwareAcceleration) {
   app.disableHardwareAcceleration();
 }
 
 function createMainWindow(): BrowserWindow {
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const desiredWindowWidth = getShellWindowWidth(SHELL_DESIRED_CONTENT_WIDTH_PX);
+  const minWindowWidth = getShellWindowWidth(SHELL_MIN_CONTENT_WIDTH_PX);
+  const width = Math.min(desiredWindowWidth, Math.max(minWindowWidth, workArea.width - SHELL_DEFAULT_VIEWPORT_MARGIN_PX));
+  const height = Math.max(
+    SHELL_MIN_HEIGHT_PX,
+    Math.min(SHELL_DEFAULT_HEIGHT_PX, workArea.height - SHELL_DEFAULT_VIEWPORT_MARGIN_PX),
+  );
+
   const window = new BrowserWindow({
-    width: 1360,
-    height: 860,
-    minWidth: 1024,
-    minHeight: 720,
+    width,
+    height,
+    minWidth: Math.min(minWindowWidth, workArea.width),
+    minHeight: Math.min(SHELL_MIN_HEIGHT_PX, workArea.height),
     autoHideMenuBar: true,
+    backgroundColor: '#dbe7ee',
     webPreferences: {
       preload: join(currentDir, '../preload/index.cjs'),
     },
   });
 
   registerTunnelAuthHandler(window);
-  registerConnectionOverlaySync(window);
-
-  const devServerUrl = process.env.ELECTRON_RENDERER_URL;
-
-  if (devServerUrl) {
-    void window.loadURL(devServerUrl);
-  } else {
-    void window.loadFile(join(currentDir, '../renderer/index.html'));
-  }
+  registerPopupHandling(window.webContents, window, false);
+  registerWebContentsDiagnostics(window.webContents, 'shell');
+  registerShellWindow(window);
+  void loadShellPage(window);
 
   return window;
 }
 
-function registerConnectionOverlaySync(window: BrowserWindow): void {
+function getShellWindowWidth(contentWidth: number): number {
+  return contentWidth + SHELL_SIDEPANEL_WIDTH_PX + SHELL_GAP_PX + SHELL_PADDING_PX * 2;
+}
+
+function registerShellWindow(window: BrowserWindow): void {
+  window.on('resize', () => {
+    updateBridgeViewBounds(window);
+  });
+
   window.webContents.on('did-finish-load', () => {
-    void syncConnectionOverlay(window).catch((error) => {
-      console.warn('Failed to sync connection overlay after page load.', error);
+    updateBridgeViewBounds(window);
+  });
+}
+
+function registerPopupHandling(
+  sourceContents: WebContents,
+  parentWindow: BrowserWindow,
+  allowInAppPopups: boolean,
+): void {
+  sourceContents.setWindowOpenHandler(({ url }) => {
+    if (!allowInAppPopups || !isSupportedPopupUrl(url)) {
+      void shell.openExternal(url).catch((error) => {
+        console.warn('Failed to open external popup target.', error);
+      });
+
+      return { action: 'deny' };
+    }
+
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        autoHideMenuBar: true,
+        height: 760,
+        minHeight: 520,
+        minWidth: 720,
+        modal: true,
+        parent: parentWindow,
+        show: false,
+        width: 980,
+      },
+    };
+  });
+
+  sourceContents.on('did-create-window', (childWindow) => {
+    popupWindows.add(childWindow);
+    registerWebContentsDiagnostics(childWindow.webContents, 'popup');
+
+    childWindow.once('ready-to-show', () => {
+      if (!childWindow.isDestroyed()) {
+        childWindow.show();
+      }
+    });
+
+    childWindow.on('closed', () => {
+      popupWindows.delete(childWindow);
+    });
+  });
+}
+
+function ensureBridgeView(window: BrowserWindow): WebContentsView {
+  if (bridgeView && !bridgeView.webContents.isDestroyed()) {
+    return bridgeView;
+  }
+
+  const view = new WebContentsView();
+  bridgeView = view;
+  bridgeViewAttached = false;
+  registerPopupHandling(view.webContents, window, true);
+  registerWebContentsDiagnostics(view.webContents, 'bridge');
+
+  view.webContents.on('did-finish-load', () => {
+    void installBridgeUiGuards(view.webContents).catch((error) => {
+      console.warn('Failed to install bridge UI guards.', error);
     });
   });
 
-  if (!overlaySyncInterval) {
-    overlaySyncInterval = setInterval(() => {
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        return;
-      }
+  view.webContents.on('destroyed', () => {
+    if (bridgeView === view) {
+      bridgeView = null;
+      bridgeViewAttached = false;
+      activeNavigationPromise = null;
+      activeNavigationTarget = null;
+    }
+  });
 
-      void syncConnectionOverlay(mainWindow).catch((error) => {
-        console.warn('Failed to refresh connection overlay.', error);
-      });
-    }, 15_000);
+  return view;
+}
+
+function attachBridgeView(window: BrowserWindow): WebContentsView {
+  const view = ensureBridgeView(window);
+
+  if (!bridgeViewAttached) {
+    window.contentView.addChildView(view);
+    bridgeViewAttached = true;
+  }
+
+  updateBridgeViewBounds(window);
+  return view;
+}
+
+function detachBridgeView(window: BrowserWindow): void {
+  if (bridgeView && bridgeViewAttached) {
+    window.contentView.removeChildView(bridgeView);
+    bridgeViewAttached = false;
+  }
+
+  clearBridgeViewState();
+}
+
+function clearBridgeViewState(): void {
+  bridgeViewAttached = false;
+
+  protectedOrigin = null;
+  protectedOriginToken = null;
+  activeNavigationTarget = null;
+  activeNavigationPromise = null;
+}
+
+function updateBridgeViewBounds(window: BrowserWindow): void {
+  if (!bridgeView || !bridgeViewAttached || window.isDestroyed()) {
+    return;
+  }
+
+  const [contentWidth, contentHeight] = window.getContentSize();
+  const width = Math.max(
+    SHELL_MIN_CONTENT_WIDTH_PX,
+    contentWidth - SHELL_PADDING_PX * 2 - SHELL_GAP_PX - SHELL_SIDEPANEL_WIDTH_PX,
+  );
+  const height = Math.max(320, contentHeight - SHELL_PADDING_PX * 2);
+
+  bridgeView.setBounds({
+    x: SHELL_PADDING_PX,
+    y: SHELL_PADDING_PX,
+    width,
+    height,
+  });
+}
+
+async function installBridgeUiGuards(webContents: WebContents): Promise<void> {
+  if (webContents.isDestroyed()) {
+    return;
+  }
+
+  try {
+    await webContents.executeJavaScript(
+      `(() => {
+        if (window.top !== window || window.opener) {
+          return;
+        }
+
+        if (window.__dviDesktopMainWindowCloseGuardInstalled) {
+          return;
+        }
+
+        Object.defineProperty(window, '__dviDesktopMainWindowCloseGuardInstalled', {
+          configurable: false,
+          enumerable: false,
+          value: true,
+          writable: false,
+        });
+
+        const blockedClose = () => {
+          window.dispatchEvent(new CustomEvent('dvi-desktop-main-window-close-blocked'));
+        };
+
+        Object.defineProperty(window, 'close', {
+          configurable: true,
+          enumerable: false,
+          value: blockedClose,
+          writable: false,
+        });
+      })();`,
+      true,
+    );
+  } catch (error) {
+    if (!isExpectedTransientWindowError(error)) {
+      throw error;
+    }
   }
 }
 
@@ -107,7 +292,9 @@ async function openPreferredUiInMainWindow(): Promise<string | null> {
 
   selectedView = 'ui';
   const snapshot = await connectionCoordinator.refreshConnection();
-  return navigateMainWindowToSnapshot(snapshot);
+  await applyViewSelection(snapshot);
+
+  return bridgeView && !bridgeView.webContents.isDestroyed() ? bridgeView.webContents.getURL() : null;
 }
 
 async function showSettingsPageInMainWindow(): Promise<void> {
@@ -116,14 +303,10 @@ async function showSettingsPageInMainWindow(): Promise<void> {
   }
 
   selectedView = 'settings';
-  protectedOrigin = null;
-  protectedOriginToken = null;
-  activeNavigationTarget = null;
-  activeNavigationPromise = null;
-  await loadShellPage(mainWindow);
+  detachBridgeView(mainWindow);
 }
 
-async function navigateMainWindowToSnapshot(snapshot: ConnectionSnapshot): Promise<string | null> {
+async function navigateBridgeViewToSnapshot(snapshot: ConnectionSnapshot): Promise<string | null> {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return null;
   }
@@ -131,6 +314,7 @@ async function navigateMainWindowToSnapshot(snapshot: ConnectionSnapshot): Promi
   const navigationContext = await connectionCoordinator.getPreferredUiNavigationContext(snapshot);
 
   if (!navigationContext.url) {
+    detachBridgeView(mainWindow);
     return null;
   }
 
@@ -141,19 +325,25 @@ async function navigateMainWindowToSnapshot(snapshot: ConnectionSnapshot): Promi
   protectedOrigin = isRemoteTunnelNavigation ? targetUrl.origin : null;
   protectedOriginToken = isRemoteTunnelNavigation ? navigationContext.authorizationToken : null;
 
+  const view = attachBridgeView(mainWindow);
+  const currentUrl = view.webContents.getURL() || null;
+
+  if (shouldPreserveCurrentBridgeLocation(currentUrl, targetNavigationUrl)) {
+    updateBridgeViewBounds(mainWindow);
+    return currentUrl;
+  }
+
   if (activeNavigationTarget === targetNavigationUrl && activeNavigationPromise) {
     return activeNavigationPromise;
   }
 
   const navigationTask = (async () => {
     try {
-      const currentUrl = mainWindow?.webContents.getURL() ?? null;
-
       if (currentUrl !== targetNavigationUrl) {
-        await mainWindow?.loadURL(targetNavigationUrl);
+        await view.webContents.loadURL(targetNavigationUrl);
       }
     } catch (error) {
-      if (!isExpectedNavigationAbort(error)) {
+      if (!isExpectedTransientWindowError(error)) {
         throw error;
       }
     } finally {
@@ -164,7 +354,7 @@ async function navigateMainWindowToSnapshot(snapshot: ConnectionSnapshot): Promi
     }
 
     if (mainWindow && !mainWindow.isDestroyed()) {
-      await syncConnectionOverlay(mainWindow, snapshot);
+      updateBridgeViewBounds(mainWindow);
     }
 
     return targetNavigationUrl;
@@ -201,259 +391,70 @@ async function applyViewSelection(snapshot: ConnectionSnapshot): Promise<void> {
     return;
   }
 
-  const currentUrl = mainWindow.webContents.getURL();
-  const isShellPage = !shouldShowConnectionOverlay(currentUrl);
-
   if (selectedView === 'settings') {
-    if (!isShellPage) {
-      await loadShellPage(mainWindow);
-    }
-
+    detachBridgeView(mainWindow);
     return;
   }
 
-  if (selectedView === 'ui') {
-    if (isShellPage) {
-      if (snapshot.preferredUiUrl) {
-        await navigateMainWindowToSnapshot(snapshot);
-        return;
-      }
-    } else {
-      const currentOrigin = tryGetOrigin(currentUrl);
-      const preferredOrigin = tryGetOrigin(snapshot.preferredUiUrl);
-
-      if (snapshot.preferredUiUrl && currentOrigin !== preferredOrigin) {
-        await navigateMainWindowToSnapshot(snapshot);
-        return;
-      }
-    }
-
-    await syncConnectionOverlay(mainWindow, snapshot);
+  if (!snapshot.preferredUiUrl) {
+    detachBridgeView(mainWindow);
     return;
   }
 
-  if (isShellPage) {
-    if (snapshot.preferredUiUrl) {
-      await navigateMainWindowToSnapshot(snapshot);
-      return;
-    }
-  } else {
-    const currentOrigin = tryGetOrigin(currentUrl);
-    const preferredOrigin = tryGetOrigin(snapshot.preferredUiUrl);
-
-    if (snapshot.preferredUiUrl && currentOrigin !== preferredOrigin) {
-      await navigateMainWindowToSnapshot(snapshot);
-      return;
-    }
-  }
-
-  await syncConnectionOverlay(mainWindow, snapshot);
+  await navigateBridgeViewToSnapshot(snapshot);
 }
 
 async function loadShellPage(window: BrowserWindow): Promise<void> {
   const devServerUrl = process.env.ELECTRON_RENDERER_URL;
 
   if (devServerUrl) {
-    const currentUrl = window.webContents.getURL();
+    try {
+      const currentUrl = window.webContents.getURL();
 
-    if (currentUrl !== devServerUrl) {
-      await window.loadURL(devServerUrl);
+      if (currentUrl !== devServerUrl) {
+        await window.loadURL(devServerUrl);
+      }
+    } catch (error) {
+      if (!isExpectedTransientWindowError(error)) {
+        throw error;
+      }
     }
 
     return;
   }
 
-  await window.loadFile(join(currentDir, '../renderer/index.html'));
+  try {
+    await window.loadFile(join(currentDir, '../renderer/index.html'));
+  } catch (error) {
+    if (!isExpectedTransientWindowError(error)) {
+      throw error;
+    }
+  }
 }
 
-async function syncConnectionOverlay(
-  window: BrowserWindow,
-  snapshot?: ConnectionSnapshot,
-): Promise<void> {
-  if (window.isDestroyed()) {
-    return;
-  }
+function registerWebContentsDiagnostics(webContents: WebContents, label: 'bridge' | 'popup' | 'shell'): void {
+  webContents.on('render-process-gone', (_event, details) => {
+    console.warn(`${label} renderer exited.`, details);
+  });
 
-  const currentUrl = window.webContents.getURL();
-
-  if (!shouldShowConnectionOverlay(currentUrl)) {
-    return;
-  }
-
-  const resolvedSnapshot = snapshot ?? (await connectionCoordinator.getSnapshot());
-  const overlayModel = buildOverlayModel(resolvedSnapshot, currentUrl);
-
-  await window.webContents.executeJavaScript(
-    `(() => {
-      const data = ${JSON.stringify(overlayModel)};
-      const existingPanel = document.getElementById('dvi-desktop-connection-overlay');
-      if (existingPanel) {
-        existingPanel.remove();
-      }
-
-      const panel = document.createElement('aside');
-      panel.id = 'dvi-desktop-connection-overlay';
-      panel.setAttribute('role', 'status');
-      panel.setAttribute('aria-live', 'polite');
-      document.documentElement.style.setProperty('--dvi-desktop-sidepanel-width', '308px');
-      document.documentElement.style.setProperty(
-        '--dvi-desktop-content-width',
-        'calc(100vw - min(var(--dvi-desktop-sidepanel-width), 42vw) - 12px)',
-      );
-      panel.innerHTML = [
-        '<div class="dvi-desktop-connection-overlay__title">Desktop connection</div>',
-        '<dl class="dvi-desktop-connection-overlay__list">',
-        '<div><dt>Local net</dt><dd>' + escapeHtml(data.localNet) + '</dd></div>',
-        '<div><dt>Remote net</dt><dd>' + escapeHtml(data.remoteNet) + '</dd></div>',
-        '<div><dt>Connected via</dt><dd>' + escapeHtml(data.connectedViaLabel) + '</dd></div>',
-        '<div><dt>URL</dt><dd class="dvi-desktop-connection-overlay__url">' + escapeHtml(data.connectedUrl) + '</dd></div>',
-        '<div><dt>Token auth</dt><dd>' + escapeHtml(data.tokenAuth) + '</dd></div>',
-        '</dl>',
-        '<div class="dvi-desktop-connection-overlay__actions">',
-        '<button type="button" class="dvi-desktop-connection-overlay__button" id="dvi-desktop-open-settings">Settings</button>',
-        '</div>',
-        '<p class="dvi-desktop-connection-overlay__status" id="dvi-desktop-overlay-status"></p>',
-      ].join('');
-
-      Object.assign(panel.style, {
-        position: 'fixed',
-        top: '0',
-        right: '0',
-        bottom: '0',
-        zIndex: '2147483647',
-        width: 'min(var(--dvi-desktop-sidepanel-width), 42vw)',
-        minWidth: '240px',
-        maxWidth: '320px',
-        padding: '16px 16px 18px',
-        borderLeft: '1px solid rgba(255,255,255,0.14)',
-        background: 'rgba(14, 18, 24, 0.94)',
-        color: '#f5f7fa',
-        boxShadow: '-8px 0 28px rgba(0,0,0,0.24)',
-        fontFamily: 'Segoe UI, sans-serif',
-        fontSize: '12px',
-        lineHeight: '1.35',
-        backdropFilter: 'blur(10px)',
-        overflowY: 'auto',
-      });
-
-      const style = document.createElement('style');
-      style.textContent = [
-        ':root { --dvi-desktop-sidepanel-width: 308px; }',
-        ':root { --dvi-desktop-content-width: calc(100vw - min(var(--dvi-desktop-sidepanel-width), 42vw) - 12px); }',
-        'html { width: 100% !important; overflow-x: hidden !important; }',
-        'body { box-sizing: border-box !important; width: var(--dvi-desktop-content-width) !important; max-width: var(--dvi-desktop-content-width) !important; padding-right: 12px !important; overflow-x: hidden !important; }',
-        'body > *:not(#dvi-desktop-connection-overlay) { max-width: var(--dvi-desktop-content-width) !important; }',
-        '.modal-overlay, dialog, [role="dialog"], ha-dialog { left: 0 !important; right: calc(min(var(--dvi-desktop-sidepanel-width), 42vw) + 12px) !important; width: auto !important; max-width: var(--dvi-desktop-content-width) !important; }',
-        '.modal-content { max-width: min(90vw, var(--dvi-desktop-content-width)) !important; }',
-        '#dvi-desktop-connection-overlay * { box-sizing: border-box; }',
-        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__title { font-size: 13px; font-weight: 700; margin-bottom: 10px; letter-spacing: 0.02em; }',
-        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__list { display: grid; gap: 6px; margin: 0; }',
-        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__list div { display: grid; grid-template-columns: 88px 1fr; gap: 8px; align-items: start; }',
-        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__actions { display: flex; gap: 8px; margin-top: 14px; }',
-        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__button { appearance: none; border: 0; border-radius: 999px; padding: 10px 14px; background: #f5f7fa; color: #0f1822; cursor: pointer; font: inherit; font-weight: 700; }',
-        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__button:disabled { opacity: 0.65; cursor: progress; }',
-        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__status { margin: 10px 0 0; color: rgba(245,247,250,0.72); min-height: 1.35em; }',
-        '#dvi-desktop-connection-overlay dt { margin: 0; color: rgba(245,247,250,0.72); font-weight: 600; }',
-        '#dvi-desktop-connection-overlay dd { margin: 0; font-weight: 500; word-break: break-word; }',
-        '#dvi-desktop-connection-overlay .dvi-desktop-connection-overlay__url { font-family: Consolas, "SFMono-Regular", monospace; font-size: 11px; }',
-        '@media (max-width: 900px) { :root { --dvi-desktop-content-width: calc(100vw - min(var(--dvi-desktop-sidepanel-width), 48vw) - 8px); } body { width: var(--dvi-desktop-content-width) !important; max-width: var(--dvi-desktop-content-width) !important; padding-right: 8px !important; } body > *:not(#dvi-desktop-connection-overlay) { max-width: var(--dvi-desktop-content-width) !important; } .modal-overlay, dialog, [role="dialog"], ha-dialog { right: calc(min(var(--dvi-desktop-sidepanel-width), 48vw) + 8px) !important; max-width: var(--dvi-desktop-content-width) !important; } .modal-content { max-width: min(95vw, var(--dvi-desktop-content-width)) !important; } #dvi-desktop-connection-overlay { width: min(var(--dvi-desktop-sidepanel-width), 48vw) !important; min-width: 220px !important; } }',
-      ].join('');
-
-      panel.appendChild(style);
-      document.body.appendChild(panel);
-
-      const openSettingsButton = document.getElementById('dvi-desktop-open-settings');
-      const statusElement = document.getElementById('dvi-desktop-overlay-status');
-
-      openSettingsButton?.addEventListener('click', async () => {
-        if (!window.dviDesktop?.showSettingsPage) {
-          if (statusElement) {
-            statusElement.textContent = 'Settings view is not available in this build.';
-          }
-
-          return;
-        }
-
-        openSettingsButton.disabled = true;
-
-        try {
-          await window.dviDesktop.showSettingsPage();
-        } catch {
-          if (statusElement) {
-            statusElement.textContent = 'Failed to open settings view.';
-          }
-
-          openSettingsButton.disabled = false;
-        }
-      });
-
-      function escapeHtml(value) {
-        return String(value)
-          .replaceAll('&', '&amp;')
-          .replaceAll('<', '&lt;')
-          .replaceAll('>', '&gt;')
-          .replaceAll('"', '&quot;')
-          .replaceAll("'", '&#39;');
-      }
-    })();`,
-    true,
-  );
+  webContents.on('unresponsive', () => {
+    console.warn(`${label} renderer became unresponsive.`);
+  });
 }
 
-function shouldShowConnectionOverlay(currentUrl: string): boolean {
+function shouldPreserveCurrentBridgeLocation(
+  currentUrl: string | null,
+  targetNavigationUrl: string,
+): boolean {
   if (!currentUrl) {
     return false;
   }
 
-  if (currentUrl.startsWith('file://')) {
-    return false;
+  if (currentUrl === targetNavigationUrl) {
+    return true;
   }
 
-  const devServerUrl = process.env.ELECTRON_RENDERER_URL;
-
-  if (devServerUrl) {
-    try {
-      return new URL(currentUrl).origin !== new URL(devServerUrl).origin;
-    } catch {
-      return true;
-    }
-  }
-
-  return true;
-}
-
-function buildOverlayModel(snapshot: ConnectionSnapshot, currentUrl: string): {
-  connectedUrl: string;
-  connectedViaLabel: string;
-  localNet: string;
-  remoteNet: string;
-  tokenAuth: string;
-} {
-  const localNet = snapshot.localBridge
-    ? snapshot.activeTransport === 'local'
-      ? 'connected'
-      : 'available'
-    : 'unavailable';
-  const remoteNet = snapshot.remoteTunnel
-    ? snapshot.activeTransport === 'remote'
-      ? 'connected'
-      : 'available'
-    : 'unavailable';
-  const connectedViaLabel = snapshot.activeTransport === 'remote' ? 'Tunnel URL' : 'Local URL';
-  const connectedUrl = snapshot.activeTransport === 'remote'
-    ? snapshot.remoteTunnel?.tunnelUrl ?? currentUrl
-    : snapshot.localBridge?.baseUrl ?? currentUrl;
-  const tokenAuth = snapshot.activeTransport === 'remote' && Boolean(protectedOriginToken)
-    ? 'Bearer token'
-    : 'not in use';
-
-  return {
-    connectedUrl,
-    connectedViaLabel,
-    localNet,
-    remoteNet,
-    tokenAuth,
-  };
+  return tryGetOrigin(currentUrl) !== null && tryGetOrigin(currentUrl) === tryGetOrigin(targetNavigationUrl);
 }
 
 function tryGetOrigin(url: string | null): string | null {
@@ -465,6 +466,15 @@ function tryGetOrigin(url: string | null): string | null {
     return new URL(url).origin;
   } catch {
     return null;
+  }
+}
+
+function isSupportedPopupUrl(url: string): boolean {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+  } catch {
+    return false;
   }
 }
 
@@ -488,6 +498,8 @@ app.whenReady().then(() => {
 
   mainWindow = createMainWindow();
   mainWindow.on('closed', () => {
+    clearBridgeViewState();
+    bridgeView = null;
     mainWindow = null;
   });
   startConnectionMonitor();
@@ -499,6 +511,8 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow();
       mainWindow.on('closed', () => {
+        clearBridgeViewState();
+        bridgeView = null;
         mainWindow = null;
       });
       void refreshConnectionRouting().catch((error) => {
@@ -508,23 +522,27 @@ app.whenReady().then(() => {
   });
 });
 
-function isExpectedNavigationAbort(error: unknown): boolean {
+function isExpectedTransientWindowError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
 
-  return error.message.includes('ERR_ABORTED');
+  return (
+    error.message.includes('ERR_ABORTED') ||
+    error.message.includes('Object has been destroyed') ||
+    error.message.includes('Render frame was disposed') ||
+    error.message.includes('WebContents was destroyed')
+  );
 }
 
 app.on('window-all-closed', () => {
+  popupWindows.clear();
+  bridgeView = null;
+  bridgeViewAttached = false;
+
   if (connectionMonitorInterval) {
     clearInterval(connectionMonitorInterval);
     connectionMonitorInterval = null;
-  }
-
-  if (overlaySyncInterval) {
-    clearInterval(overlaySyncInterval);
-    overlaySyncInterval = null;
   }
 
   if (process.platform !== 'darwin') {

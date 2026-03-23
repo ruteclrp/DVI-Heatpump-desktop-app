@@ -8,52 +8,64 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="hero hero-panel">
-        <p class="eyebrow">Windows desktop shell</p>
-        <h1>DVI Heatpump</h1>
-        <p class="lede">
-          Electron host scaffold for local bridge discovery, tunnel refresh, and
-          secure token handling.
-        </p>
+      <section class="bridge-stage">
+        <div class="bridge-stage__copy">
+          <p class="eyebrow">Bridge workspace</p>
+          <h1>DVI Heatpump</h1>
+          <p class="lede">
+            The live bridge UI is hosted in a native desktop web view here while the
+            control panel stays fixed on the right.
+          </p>
+        </div>
       </section>
-      <section class="status-card runtime-card">
-        <h2>Runtime</h2>
-        <dl id="runtime-info"></dl>
-      </section>
-      <section class="status-card connection-card">
-        <div class="card-header">
-          <div>
-            <p class="eyebrow">Connection</p>
-            <h2>Bridge and tunnel status</h2>
+      <aside class="side-panel">
+        <section class="hero hero-panel">
+          <p class="eyebrow">Windows desktop shell</p>
+          <h2>Fixed control panel</h2>
+          <p class="summary-text">
+            Keep discovery, tunnel switching, and bridge controls available without
+            mutating the bridge DOM.
+          </p>
+        </section>
+        <section class="status-card runtime-card">
+          <h2>Runtime</h2>
+          <dl id="runtime-info"></dl>
+        </section>
+        <section class="status-card connection-card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">Connection</p>
+              <h2>Bridge and tunnel status</h2>
+            </div>
+            <button id="refresh-connection" type="button">Refresh</button>
           </div>
-          <button id="refresh-connection" type="button">Refresh</button>
-        </div>
-        <p id="connection-summary" class="summary-text"></p>
-        <dl id="connection-info"></dl>
-        <div class="action-row">
-          <button id="open-preferred-ui" type="button">Switch to UI view</button>
-          <button id="clear-stored-connection-state" type="button" class="secondary-button">
-            Clear token and tunnel
-          </button>
-        </div>
-        <p id="clear-stored-connection-status" class="summary-text"></p>
-        <form id="bridge-override-form" class="pairing-form compact-form">
-          <label>
-            <span>Bridge URL override for VPN</span>
-            <input
-              id="bridge-override-url"
-              name="bridgeOverrideUrl"
-              type="text"
-              placeholder="http://192.168.1.50 or https://bridge.example"
-            />
-          </label>
+          <p id="connection-summary" class="summary-text"></p>
+          <dl id="connection-info"></dl>
           <div class="action-row">
-            <button id="save-bridge-override" type="submit">Save bridge URL</button>
-            <button id="clear-bridge-override" type="button" class="secondary-button">Clear</button>
+            <button id="open-preferred-ui" type="button">Show bridge UI</button>
+            <button id="clear-stored-connection-state" type="button" class="secondary-button">
+              Clear token and tunnel
+            </button>
           </div>
-        </form>
-        <p id="bridge-override-status" class="summary-text"></p>
-      </section>
+          <p id="clear-stored-connection-status" class="summary-text"></p>
+          <form id="bridge-override-form" class="pairing-form compact-form">
+            <label>
+              <span>Bridge URL override for VPN</span>
+              <input
+                id="bridge-override-url"
+                name="bridgeOverrideUrl"
+                type="text"
+                placeholder="http://192.168.1.50 or https://bridge.example"
+              />
+            </label>
+            <div class="action-row">
+              <button id="save-bridge-override" type="submit">Save bridge URL</button>
+              <button id="clear-bridge-override" type="button" class="secondary-button">Clear</button>
+            </div>
+          </form>
+          <p id="bridge-override-status" class="summary-text"></p>
+        </section>
+      </aside>
     </main>
   </body>
 </html>

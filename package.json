@@ -1,6 +1,6 @@
 {
   "name": "dvi-heatpump-desktop-app",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Windows desktop shell for the DVI Heatpump app",
   "type": "module",
@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "postinstall": "electron-builder install-app-deps",
     "typecheck": "tsc --noEmit",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --arm64",
     "dist:win:x64": "npm run build && electron-builder --win nsis --x64",
