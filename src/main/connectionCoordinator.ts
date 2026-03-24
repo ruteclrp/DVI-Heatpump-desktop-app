@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { app } from 'electron';
 import type { ConnectionSnapshot } from '@shared/connection';
-import type { AppRuntimeInfo } from '@shared/runtime';
+import type { AppDateTimeFormatInfo, AppRuntimeInfo } from '@shared/runtime';
 import {
   discoverBridge,
   normalizeBridgeBaseUrl,
@@ -19,9 +21,11 @@ import { fetchTunnelInfo, type TunnelInfo } from './tunnel';
 
 const TOKEN_ACCOUNT = 'bridge-token';
 const TOKEN_SERVICE = 'com.dvi.heatpump.desktop';
+const execFileAsync = promisify(execFile);
 
 export class ConnectionCoordinator {
   private lastSnapshot: ConnectionSnapshot | null = null;
+  private runtimeInfoPromise: Promise<AppRuntimeInfo> | null = null;
 
   async getSnapshot(): Promise<ConnectionSnapshot> {
     if (this.lastSnapshot) {
@@ -106,12 +110,12 @@ export class ConnectionCoordinator {
     return this.refreshConnection();
   }
 
-  getRuntimeInfo(): AppRuntimeInfo {
-    return {
-      platform: process.platform,
-      shell: 'electron',
-      version: app.getVersion(),
-    };
+  getRuntimeInfo(): Promise<AppRuntimeInfo> {
+    if (!this.runtimeInfoPromise) {
+      this.runtimeInfoPromise = this.loadRuntimeInfo();
+    }
+
+    return this.runtimeInfoPromise;
   }
 
   async getPreferredUiNavigationContext(snapshot?: ConnectionSnapshot): Promise<{
@@ -232,6 +236,100 @@ export class ConnectionCoordinator {
         : null,
     };
   }
+
+  private async loadRuntimeInfo(): Promise<AppRuntimeInfo> {
+    return {
+      dateTimeFormat: await loadMachineDateTimeFormat(),
+      platform: process.platform,
+      shell: 'electron',
+      version: app.getVersion(),
+    };
+  }
+}
+
+async function loadMachineDateTimeFormat(): Promise<AppDateTimeFormatInfo> {
+  const fallbackLocale = app.getPreferredSystemLanguages()[0] ?? app.getLocale();
+
+  if (process.platform !== 'win32') {
+    return {
+      locale: fallbackLocale,
+      shortDatePattern: null,
+      shortTimePattern: null,
+    };
+  }
+
+  try {
+    const registryValues = await readWindowsInternationalRegistry();
+
+    if (registryValues.locale || registryValues.shortDatePattern || registryValues.shortTimePattern) {
+      return {
+        locale: registryValues.locale ?? fallbackLocale,
+        shortDatePattern: registryValues.shortDatePattern,
+        shortTimePattern: registryValues.shortTimePattern,
+      };
+    }
+  } catch {
+    // Fall through to PowerShell lookup.
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "$culture = Get-Culture; [pscustomobject]@{ locale = $culture.Name; shortDatePattern = $culture.DateTimeFormat.ShortDatePattern; shortTimePattern = $culture.DateTimeFormat.ShortTimePattern } | ConvertTo-Json -Compress",
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 2000,
+        windowsHide: true,
+      },
+    );
+
+    const parsed = JSON.parse(stdout.trim()) as Partial<AppDateTimeFormatInfo>;
+
+    return {
+      locale: typeof parsed.locale === 'string' && parsed.locale.trim() ? parsed.locale : fallbackLocale,
+      shortDatePattern: typeof parsed.shortDatePattern === 'string' ? parsed.shortDatePattern : null,
+      shortTimePattern: typeof parsed.shortTimePattern === 'string' ? parsed.shortTimePattern : null,
+    };
+  } catch {
+    return {
+      locale: fallbackLocale,
+      shortDatePattern: null,
+      shortTimePattern: null,
+    };
+  }
+}
+
+async function readWindowsInternationalRegistry(): Promise<{
+  locale: string | null;
+  shortDatePattern: string | null;
+  shortTimePattern: string | null;
+}> {
+  const { stdout } = await execFileAsync(
+    'reg.exe',
+    ['query', 'HKCU\\Control Panel\\International'],
+    {
+      encoding: 'utf8',
+      timeout: 2000,
+      windowsHide: true,
+    },
+  );
+
+  return {
+    locale: extractRegistryValue(stdout, 'LocaleName'),
+    shortDatePattern: extractRegistryValue(stdout, 'sShortDate'),
+    shortTimePattern: extractRegistryValue(stdout, 'sShortTime'),
+  };
+}
+
+function extractRegistryValue(output: string, key: string): string | null {
+  const pattern = new RegExp(`^\\s*${key}\\s+REG_\\w+\\s+(.+)$`, 'mi');
+  const match = output.match(pattern);
+  return match?.[1]?.trim() || null;
 }
 
 function getErrorMessage(error: unknown): string {

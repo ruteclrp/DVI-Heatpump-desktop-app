@@ -10,26 +10,22 @@
     <main class="app-shell">
       <section class="bridge-stage">
         <div class="bridge-stage__copy">
-          <p class="eyebrow">Bridge workspace</p>
-          <h1>DVI Heatpump</h1>
-          <p class="lede">
-            The live bridge UI is hosted in a native desktop web view here while the
-            control panel stays fixed on the right.
-          </p>
+          <div class="startup-panel">
+            <p class="eyebrow">Preparing workspace</p>
+            <h1>DVI Heatpump</h1>
+            <div class="startup-preview" aria-hidden="true">
+              <span class="startup-preview__pill"></span>
+              <span class="startup-preview__line startup-preview__line--strong"></span>
+              <span class="startup-preview__line"></span>
+              <span class="startup-preview__line startup-preview__line--short"></span>
+            </div>
+          </div>
         </div>
       </section>
       <aside class="side-panel">
         <section class="hero hero-panel">
-          <p class="eyebrow">Windows desktop shell</p>
-          <h2>Fixed control panel</h2>
-          <p class="summary-text">
-            Keep discovery, tunnel switching, and bridge controls available without
-            mutating the bridge DOM.
-          </p>
-        </section>
-        <section class="status-card runtime-card">
-          <h2>Runtime</h2>
-          <dl id="runtime-info"></dl>
+          <p class="panel-title">Windows desktop shell</p>
+          <p id="runtime-info" class="version-value"></p>
         </section>
         <section class="status-card connection-card">
           <div class="card-header">

@@ -1,6 +1,6 @@
 {
   "name": "dvi-heatpump-desktop-app",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Windows desktop shell for the DVI Heatpump app",
   "type": "module",

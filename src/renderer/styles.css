@@ -62,11 +62,69 @@ body {
   position: absolute;
   inset: 0;
   display: grid;
-  align-content: end;
-  gap: 12px;
+  place-items: center;
   padding: 28px;
   background:
-    linear-gradient(180deg, rgba(249, 251, 253, 0.18) 0%, rgba(227, 240, 248, 0.74) 100%);
+    linear-gradient(180deg, rgba(249, 251, 253, 0.22) 0%, rgba(227, 240, 248, 0.78) 100%);
+}
+
+.startup-panel {
+  width: min(100%, 420px);
+  display: grid;
+  gap: 18px;
+  padding: 28px;
+  border: 1px solid rgba(39, 70, 93, 0.12);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 16px 40px rgba(41, 72, 95, 0.12);
+  backdrop-filter: blur(12px);
+}
+
+.startup-preview {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(242, 248, 252, 0.95) 0%, rgba(232, 242, 248, 0.85) 100%);
+}
+
+.startup-preview__pill,
+.startup-preview__line {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(120, 160, 188, 0.2), rgba(120, 160, 188, 0.45), rgba(120, 160, 188, 0.2));
+  background-size: 200% 100%;
+  animation: startup-sheen 2.2s ease-in-out infinite;
+}
+
+.startup-preview__pill {
+  width: 132px;
+  height: 12px;
+}
+
+.startup-preview__line {
+  width: 100%;
+  height: 14px;
+}
+
+.startup-preview__line--strong {
+  height: 18px;
+  width: 84%;
+}
+
+.startup-preview__line--short {
+  width: 58%;
+}
+
+@keyframes startup-sheen {
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: -100% 0;
+  }
 }
 
 .side-panel {
@@ -79,9 +137,24 @@ body {
   padding-bottom: 20px;
 }
 
+.panel-title {
+  margin: 0;
+  font-size: 1.24rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #163042;
+}
+
 .runtime-card,
 .connection-card {
   min-width: 0;
+}
+
+.version-value {
+  margin-top: 6px;
+  font-size: 0.92rem;
+  font-weight: 400;
+  color: #486f8b;
 }
 
 .eyebrow {
@@ -132,6 +205,14 @@ h2 {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.connection-card .card-header {
+  margin-bottom: 8px;
+}
+
+.connection-card .card-header h2 {
+  margin-bottom: 0;
 }
 
 .summary-text {

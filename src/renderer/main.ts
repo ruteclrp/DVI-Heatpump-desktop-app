@@ -1,6 +1,6 @@
 import './styles.css';
 import type { ConnectionSnapshot } from '@shared/connection';
-import type { DviDesktopApi } from '@shared/runtime';
+import type { AppRuntimeInfo, DviDesktopApi } from '@shared/runtime';
 
 declare global {
   interface Window {
@@ -8,20 +8,17 @@ declare global {
   }
 }
 
+const runtimeInfoPromise = window.dviDesktop.getRuntimeInfo();
+
 async function renderRuntimeInfo(): Promise<void> {
-  const runtimeElement = document.querySelector<HTMLDListElement>('#runtime-info');
+  const runtimeElement = document.querySelector<HTMLElement>('#runtime-info');
 
   if (!runtimeElement) {
     return;
   }
 
-  const runtimeInfo = await window.dviDesktop.getRuntimeInfo();
-
-  runtimeElement.innerHTML = `
-    <div><dt>Shell</dt><dd>${runtimeInfo.shell}</dd></div>
-    <div><dt>Platform</dt><dd>${runtimeInfo.platform}</dd></div>
-    <div><dt>Version</dt><dd>${runtimeInfo.version}</dd></div>
-  `;
+  const runtimeInfo = await runtimeInfoPromise;
+  runtimeElement.textContent = `Version: ${runtimeInfo.version}`;
 }
 
 async function renderConnectionSnapshot(snapshot?: ConnectionSnapshot): Promise<void> {
@@ -36,6 +33,7 @@ async function renderConnectionSnapshot(snapshot?: ConnectionSnapshot): Promise<
   }
 
   const connectionSnapshot = snapshot ?? (await window.dviDesktop.getConnectionSnapshot());
+  const runtimeInfo = await runtimeInfoPromise;
   const tunnelStatus = getTunnelStatus(connectionSnapshot);
 
   connectionSummaryElement.textContent = connectionSnapshot.lastError
@@ -61,10 +59,10 @@ async function renderConnectionSnapshot(snapshot?: ConnectionSnapshot): Promise<
     <div><dt>Local bridge</dt><dd>${renderUrlValue(connectionSnapshot.localBridge?.baseUrl, 'not found')}</dd></div>
     <div><dt>Bridge source</dt><dd>${escapeHtml(connectionSnapshot.localBridge?.source ?? 'n/a')}</dd></div>
     <div><dt>Tunnel status</dt><dd>${escapeHtml(tunnelStatus)}</dd></div>
-    <div><dt>Tunnel fetched at</dt><dd>${renderDateValue(connectionSnapshot.remoteTunnel?.fetchedAt, 'not fetched')}</dd></div>
+    <div><dt>Tunnel fetched</dt><dd>${renderDateValue(connectionSnapshot.remoteTunnel?.fetchedAt, 'not fetched', runtimeInfo)}</dd></div>
     <div><dt>Tunnel URL</dt><dd>${renderUrlValue(connectionSnapshot.remoteTunnel?.tunnelUrl, 'not available')}</dd></div>
     <div><dt>Preferred UI URL</dt><dd>${renderUrlValue(connectionSnapshot.preferredUiUrl, 'offline')}</dd></div>
-    <div><dt>Updated</dt><dd>${escapeHtml(new Date(connectionSnapshot.lastUpdatedAt).toLocaleString())}</dd></div>
+    <div><dt>Updated</dt><dd>${renderDateValue(connectionSnapshot.lastUpdatedAt, 'n/a', runtimeInfo)}</dd></div>
   `;
 }
 
@@ -241,12 +239,99 @@ function renderTextValue(value: string | null | undefined, fallback: string): st
   return escapeHtml(value?.trim() ? value : fallback);
 }
 
-function renderDateValue(value: string | null | undefined, fallback: string): string {
+function renderDateValue(value: string | null | undefined, fallback: string, runtimeInfo: AppRuntimeInfo): string {
   if (!value) {
     return escapeHtml(fallback);
   }
 
-  return escapeHtml(new Date(value).toLocaleString());
+  return escapeHtml(formatMachineDateTime(new Date(value), runtimeInfo));
+}
+
+function formatMachineDateTime(value: Date, runtimeInfo: AppRuntimeInfo): string {
+  const { locale, shortDatePattern, shortTimePattern } = runtimeInfo.dateTimeFormat;
+
+  if (!shortDatePattern && !shortTimePattern) {
+    return new Intl.DateTimeFormat(locale || undefined, {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(value);
+  }
+
+  const parts = [
+    shortDatePattern ? formatMachinePattern(value, shortDatePattern, locale) : '',
+    shortTimePattern ? formatMachinePattern(value, shortTimePattern, locale) : '',
+  ].filter(Boolean);
+
+  return parts.join(' ');
+}
+
+function formatMachinePattern(value: Date, pattern: string, locale: string): string {
+  const tokenPattern = /yyyy|yy|y|MMMM|MMM|MM|M|dddd|ddd|dd|d|HH|H|hh|h|mm|m|ss|s|tt|'[^']*'/g;
+
+  return pattern.replace(tokenPattern, (token) => formatPatternToken(value, token, locale));
+}
+
+function formatPatternToken(value: Date, token: string, locale: string): string {
+  if (token.startsWith("'")) {
+    return token.slice(1, -1);
+  }
+
+  switch (token) {
+    case 'd':
+      return String(value.getDate());
+    case 'dd':
+      return String(value.getDate()).padStart(2, '0');
+    case 'ddd':
+      return formatLocalePart(value, locale, { weekday: 'short' });
+    case 'dddd':
+      return formatLocalePart(value, locale, { weekday: 'long' });
+    case 'M':
+      return String(value.getMonth() + 1);
+    case 'MM':
+      return String(value.getMonth() + 1).padStart(2, '0');
+    case 'MMM':
+      return formatLocalePart(value, locale, { month: 'short' });
+    case 'MMMM':
+      return formatLocalePart(value, locale, { month: 'long' });
+    case 'y':
+      return String(value.getFullYear());
+    case 'yy':
+      return String(value.getFullYear()).slice(-2).padStart(2, '0');
+    case 'yyyy':
+      return String(value.getFullYear()).padStart(4, '0');
+    case 'H':
+      return String(value.getHours());
+    case 'HH':
+      return String(value.getHours()).padStart(2, '0');
+    case 'h': {
+      const hours = value.getHours() % 12 || 12;
+      return String(hours);
+    }
+    case 'hh': {
+      const hours = value.getHours() % 12 || 12;
+      return String(hours).padStart(2, '0');
+    }
+    case 'm':
+      return String(value.getMinutes());
+    case 'mm':
+      return String(value.getMinutes()).padStart(2, '0');
+    case 's':
+      return String(value.getSeconds());
+    case 'ss':
+      return String(value.getSeconds()).padStart(2, '0');
+    case 'tt':
+      return value.getHours() >= 12 ? 'PM' : 'AM';
+    default:
+      return token;
+  }
+}
+
+function formatLocalePart(
+  value: Date,
+  locale: string,
+  options: Intl.DateTimeFormatOptions,
+): string {
+  return new Intl.DateTimeFormat(locale || undefined, options).format(value);
 }
 
 function renderUrlValue(value: string | null | undefined, fallback: string): string {

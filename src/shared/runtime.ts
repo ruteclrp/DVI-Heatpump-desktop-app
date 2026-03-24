@@ -1,6 +1,13 @@
 import type { ConnectionSnapshot } from './connection';
 
+export interface AppDateTimeFormatInfo {
+  locale: string;
+  shortDatePattern: string | null;
+  shortTimePattern: string | null;
+}
+
 export interface AppRuntimeInfo {
+  dateTimeFormat: AppDateTimeFormatInfo;
   platform: NodeJS.Platform;
   shell: 'electron';
   version: string;

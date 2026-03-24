@@ -8,7 +8,7 @@ export interface TokenRecord {
   token: string;
 }
 
-let keytarPromise: Promise<KeytarApi> | null = null;
+let keytarPromise: Promise<KeytarApi | null> | null = null;
 let keytarUnavailableReason: string | null = null;
 let warnedAboutFallback = false;
 const inMemoryTokenStore = new Map<string, string>();
