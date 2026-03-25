@@ -57,6 +57,8 @@ This repository starts with the desktop shell and the parity contract for matchi
 
 The intended Windows deliverable is a standard `.exe` installer generated with `electron-builder` using the NSIS target.
 
+The build resources include a custom NSIS `multiUser.nsh` override so all-users installs default to the native `Program Files` location on ARM64 Windows instead of falling back to `Program Files (x86)`.
+
 - `npm run build` compiles the Electron app into `dist/`.
 - `npm run dist:win` builds both `x64` and `arm64` Windows installers into `release/`.
 - `npm run dist:win:x64` builds only the `x64` installer.
