@@ -144,15 +144,7 @@ body {
 .panel-brand {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-}
-
-.panel-brand__logo {
-  width: 92px;
-  height: auto;
-  object-fit: contain;
-  opacity: 0.92;
 }
 
 .panel-title {
@@ -347,10 +339,6 @@ button:disabled {
   .panel-brand {
     align-items: flex-start;
   }
-
-  .panel-brand__logo {
-    width: 76px;
-  }
 }
 
 @media (max-height: 780px) {
@@ -370,10 +358,6 @@ button:disabled {
 @media (max-width: 760px) {
   .panel-brand {
     align-items: flex-start;
-  }
-
-  .panel-brand__logo {
-    width: 72px;
   }
 
   h1 {
