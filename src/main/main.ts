@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import {
   app,
   BrowserWindow,
+  nativeImage,
   WebContentsView,
   ipcMain,
   screen,
@@ -33,6 +34,9 @@ const SHELL_MIN_CONTENT_WIDTH_PX = 860;
 const SHELL_MIN_HEIGHT_PX = 760;
 const SHELL_PADDING_PX = 16;
 const SHELL_SIDEPANEL_WIDTH_PX = 360;
+const BRIDGE_OVERLAY_LOGO_WIDTH_PX = 92;
+const BRIDGE_OVERLAY_MARGIN_PX = 14;
+const DVI_WEBSITE_URL = 'https://dvienergi.com/';
 let mainWindow: BrowserWindow | null = null;
 let bridgeView: WebContentsView | null = null;
 let bridgeViewAttached = false;
@@ -44,6 +48,7 @@ let activeNavigationTarget: string | null = null;
 let activeNavigationPromise: Promise<string | null> | null = null;
 let selectedView: 'auto' | 'settings' | 'ui' = 'auto';
 const popupWindows = new Set<BrowserWindow>();
+const bridgeOverlayLogoDataUrl = loadBridgeOverlayLogoDataUrl();
 
 if (disableHardwareAcceleration) {
   app.disableHardwareAcceleration();
@@ -100,6 +105,14 @@ function registerPopupHandling(
   allowInAppPopups: boolean,
 ): void {
   sourceContents.setWindowOpenHandler(({ url }) => {
+    if (isDviWebsiteUrl(url)) {
+      void shell.openExternal(url).catch((error) => {
+        console.warn('Failed to open DVI website.', error);
+      });
+
+      return { action: 'deny' };
+    }
+
     if (!allowInAppPopups || !isSupportedPopupUrl(url)) {
       void shell.openExternal(url).catch((error) => {
         console.warn('Failed to open external popup target.', error);
@@ -121,6 +134,17 @@ function registerPopupHandling(
         width: 980,
       },
     };
+  });
+
+  sourceContents.on('will-navigate', (event, url) => {
+    if (!isDviWebsiteUrl(url)) {
+      return;
+    }
+
+    event.preventDefault();
+    void shell.openExternal(url).catch((error) => {
+      console.warn('Failed to open DVI website.', error);
+    });
   });
 
   sourceContents.on('did-create-window', (childWindow) => {
@@ -153,6 +177,10 @@ function ensureBridgeView(window: BrowserWindow): WebContentsView {
   view.webContents.on('did-finish-load', () => {
     void installBridgeUiGuards(view.webContents).catch((error) => {
       console.warn('Failed to install bridge UI guards.', error);
+    });
+
+    void installBridgeBrandOverlay(view.webContents).catch((error) => {
+      console.warn('Failed to install bridge brand overlay.', error);
     });
   });
 
@@ -254,6 +282,88 @@ async function installBridgeUiGuards(webContents: WebContents): Promise<void> {
       })();`,
       true,
     );
+  } catch (error) {
+    if (!isExpectedTransientWindowError(error)) {
+      throw error;
+    }
+  }
+}
+
+function loadBridgeOverlayLogoDataUrl(): string | null {
+  const logoPath = join(app.getAppPath(), 'docs', 'DVI_logo.png');
+  const logoImage = nativeImage.createFromPath(logoPath);
+
+  if (logoImage.isEmpty()) {
+    console.warn('Bridge overlay logo could not be loaded.', { logoPath });
+    return null;
+  }
+
+  return logoImage.toDataURL();
+}
+
+async function installBridgeBrandOverlay(webContents: WebContents): Promise<void> {
+  if (webContents.isDestroyed() || !bridgeOverlayLogoDataUrl) {
+    return;
+  }
+
+  const overlayScript = `(() => {
+    if (window.top !== window || window.opener) {
+      return;
+    }
+
+    const overlayId = 'dvi-desktop-bridge-brand-overlay';
+    const existingOverlay = document.getElementById(overlayId);
+
+    if (existingOverlay) {
+      return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = overlayId;
+    overlay.style.position = 'fixed';
+    overlay.style.top = '${BRIDGE_OVERLAY_MARGIN_PX}px';
+    overlay.style.left = '${BRIDGE_OVERLAY_MARGIN_PX}px';
+    overlay.style.zIndex = '2147483647';
+    overlay.style.pointerEvents = 'auto';
+
+    const link = document.createElement('a');
+    link.href = ${JSON.stringify(DVI_WEBSITE_URL)};
+    link.target = '_blank';
+    link.rel = 'noreferrer noopener';
+    link.ariaLabel = 'Open DVI Energi website';
+    link.style.display = 'block';
+    link.style.lineHeight = '0';
+    link.style.cursor = 'pointer';
+
+    const image = document.createElement('img');
+    image.alt = 'DVI';
+    image.src = ${JSON.stringify(bridgeOverlayLogoDataUrl)};
+    image.style.display = 'block';
+    image.style.width = '${BRIDGE_OVERLAY_LOGO_WIDTH_PX}px';
+    image.style.height = 'auto';
+
+    link.appendChild(image);
+    overlay.appendChild(link);
+
+    const appendOverlay = () => {
+      if (!document.body) {
+        return;
+      }
+
+      if (!document.getElementById(overlayId)) {
+        document.body.appendChild(overlay);
+      }
+    };
+
+    appendOverlay();
+
+    if (!document.body) {
+      window.addEventListener('DOMContentLoaded', appendOverlay, { once: true });
+    }
+  })();`;
+
+  try {
+    await webContents.executeJavaScript(overlayScript, true);
   } catch (error) {
     if (!isExpectedTransientWindowError(error)) {
       throw error;
@@ -473,6 +583,15 @@ function isSupportedPopupUrl(url: string): boolean {
   try {
     const parsedUrl = new URL(url);
     return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isDviWebsiteUrl(url: string): boolean {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.protocol === 'https:' && parsedUrl.hostname === 'dvienergi.com';
   } catch {
     return false;
   }
