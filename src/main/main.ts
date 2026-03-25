@@ -290,15 +290,22 @@ async function installBridgeUiGuards(webContents: WebContents): Promise<void> {
 }
 
 function loadBridgeOverlayLogoDataUrl(): string | null {
-  const logoPath = join(app.getAppPath(), 'docs', 'DVI_logo.png');
-  const logoImage = nativeImage.createFromPath(logoPath);
+  const logoPaths = [
+    join(app.getAppPath(), 'docs', 'DVI_logo.png'),
+    join(process.resourcesPath, 'app.asar', 'docs', 'DVI_logo.png'),
+    join(process.resourcesPath, 'docs', 'DVI_logo.png'),
+  ];
 
-  if (logoImage.isEmpty()) {
-    console.warn('Bridge overlay logo could not be loaded.', { logoPath });
-    return null;
+  for (const logoPath of logoPaths) {
+    const logoImage = nativeImage.createFromPath(logoPath);
+
+    if (!logoImage.isEmpty()) {
+      return logoImage.toDataURL();
+    }
   }
 
-  return logoImage.toDataURL();
+  console.warn('Bridge overlay logo could not be loaded.', { logoPaths });
+  return null;
 }
 
 async function installBridgeBrandOverlay(webContents: WebContents): Promise<void> {

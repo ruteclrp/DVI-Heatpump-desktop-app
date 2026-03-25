@@ -39,6 +39,7 @@
     },
     "files": [
       "dist/**/*",
+      "docs/DVI_logo.png",
       "package.json"
     ],
     "extraMetadata": {
