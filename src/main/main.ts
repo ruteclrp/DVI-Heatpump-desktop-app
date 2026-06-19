@@ -34,6 +34,9 @@ const SHELL_MIN_CONTENT_WIDTH_PX = 860;
 const SHELL_MIN_HEIGHT_PX = 760;
 const SHELL_PADDING_PX = 16;
 const SHELL_SIDEPANEL_WIDTH_PX = 360;
+const BRIDGE_BASE_VIEW_WIDTH_PX = 1080;
+const BRIDGE_BASE_VIEW_HEIGHT_PX = 940;
+const BRIDGE_MIN_ZOOM_FACTOR = 0.72;
 const BRIDGE_OVERLAY_LOGO_WIDTH_PX = 92;
 const BRIDGE_OVERLAY_MARGIN_PX = 14;
 const DVI_WEBSITE_URL = 'https://dvienergi.com/';
@@ -151,6 +154,14 @@ function registerPopupHandling(
     popupWindows.add(childWindow);
     registerWebContentsDiagnostics(childWindow.webContents, 'popup');
 
+    childWindow.on('resize', () => {
+      updatePopupZoom(childWindow);
+    });
+
+    childWindow.webContents.on('did-finish-load', () => {
+      updatePopupZoom(childWindow);
+    });
+
     childWindow.once('ready-to-show', () => {
       if (!childWindow.isDestroyed()) {
         childWindow.show();
@@ -244,6 +255,40 @@ function updateBridgeViewBounds(window: BrowserWindow): void {
     width,
     height,
   });
+
+  updateWebContentsZoom(bridgeView.webContents, width, height);
+}
+
+function updatePopupZoom(window: BrowserWindow): void {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) {
+    return;
+  }
+
+  const [contentWidth, contentHeight] = window.getContentSize();
+  updateWebContentsZoom(window.webContents, contentWidth, contentHeight);
+}
+
+function updateWebContentsZoom(webContents: WebContents, width: number, height: number): void {
+  if (webContents.isDestroyed()) {
+    return;
+  }
+
+  const nextZoomFactor = getAdaptiveZoomFactor(width, height);
+  const currentZoomFactor = webContents.getZoomFactor();
+
+  if (Math.abs(currentZoomFactor - nextZoomFactor) < 0.01) {
+    return;
+  }
+
+  webContents.setZoomFactor(nextZoomFactor);
+}
+
+function getAdaptiveZoomFactor(width: number, height: number): number {
+  const widthFactor = width / BRIDGE_BASE_VIEW_WIDTH_PX;
+  const heightFactor = height / BRIDGE_BASE_VIEW_HEIGHT_PX;
+  const fitFactor = Math.min(widthFactor, heightFactor, 1);
+
+  return Math.max(BRIDGE_MIN_ZOOM_FACTOR, fitFactor);
 }
 
 async function installBridgeUiGuards(webContents: WebContents): Promise<void> {
